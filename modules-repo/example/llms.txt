@@ -1,0 +1,6 @@
+# example
+
+> A sample module demonstrating the context module structure
+
+- [info.md](info.md): What this module contains and how to use it
+- [module.yaml](module.yaml): Module configuration

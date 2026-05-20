@@ -1,0 +1,9 @@
+[project]
+name = "everythingiscontext"
+version = "0.1.0"
+description = "Agent-agnostic context management system"
+requires-python = ">=3.11"
+dependencies = ["pydantic", "pyyaml"]
+
+[project.scripts]
+eic = "eic:main"
