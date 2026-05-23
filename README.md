@@ -5,23 +5,34 @@ An open-source, agent-agnostic context management system. Create, organize, and 
 ## Quick start
 
 ```bash
-# 1. Install dependencies
-pip install .
+# Install
+curl -LsSf https://everythingiscontext.com/eic/install.sh | sh
 
-# 2. Initialize the workspace
-python eic.py init
+# Create a project
+mkdir my-project && cd my-project
+eic init
 
-# 3. Create a module
-python eic.py new integration stripe
+# Create a module
+eic new integration stripe
 
-# 4. Edit the module files
+# Edit the module files
 # Fill in modules-repo/stripe/info.md with your Stripe docs, auth details, operations
 
-# 5. Load it
-python eic.py load stripe
+# Load it
+eic load stripe
 
-# 6. Point your agent at context/
+# Point your agent at context/
 # Open Claude Code, Codex, Cursor, or any coding agent in the context/ directory
+```
+
+**Alternative install methods:**
+
+```bash
+# Via uv (if already installed)
+uv tool install everythingiscontext
+
+# Via pip
+pip install everythingiscontext
 ```
 
 ## How it works
@@ -42,13 +53,13 @@ The agent reads `system.md` -> `llms.txt` -> follows links into modules.
 
 | Command | Description |
 |---------|-------------|
-| `python eic.py init` | Initialize workspace |
-| `python eic.py new <kind> <name>` | Create a module (kind: integration, task, workflow) |
-| `python eic.py load <name> [...]` | Load modules into workspace |
-| `python eic.py unload <name>` | Remove module from workspace |
-| `python eic.py ls` | List all modules and status |
-| `python eic.py env` | Check secret variable status |
-| `python eic.py validate [name]` | Validate module structure |
+| `eic init` | Initialize workspace |
+| `eic new <kind> <name>` | Create a module (kind: integration, task, workflow) |
+| `eic load <name> [...]` | Load modules into workspace |
+| `eic unload <name>` | Remove module from workspace |
+| `eic ls` | List all modules and status |
+| `eic env` | Check secret variable status |
+| `eic validate [name]` | Validate module structure |
 
 ## Module kinds
 

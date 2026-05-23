@@ -1,51 +1,67 @@
 #!/usr/bin/env python3
-"""eic.py — Everything Is Context module manager.
+"""eic — Everything Is Context module manager.
 
 Usage:
-    python eic.py init
-    python eic.py new <kind> <name>
-    python eic.py load <name> [name2 ...]
-    python eic.py unload <name>
-    python eic.py ls
-    python eic.py env
-    python eic.py validate [name]
+    eic init
+    eic new <kind> <name>
+    eic load <name> [name2 ...]
+    eic unload <name>
+    eic ls
+    eic env
+    eic validate [name]
 """
 import argparse
+import importlib.resources
 import os
 import re
-import shutil
 import sys
 from pathlib import Path
 
-# Resolve paths relative to this script's location
-SCRIPT_DIR = Path(__file__).resolve().parent
-CORE_DIR = SCRIPT_DIR / "core"
-MODULES_DIR = SCRIPT_DIR / "modules-repo"
-CONTEXT_DIR = SCRIPT_DIR / "context"
-TEMPLATES_DIR = CORE_DIR / "templates"
-SECRETS_MD = SCRIPT_DIR / "secrets.md"
+# ---------------------------------------------------------------------------
+# Paths — all relative to CWD (the user's project directory)
+# ---------------------------------------------------------------------------
+MODULES_DIR = Path.cwd() / "modules-repo"
+CONTEXT_DIR = Path.cwd() / "context"
 
-sys.path.insert(0, str(SCRIPT_DIR))
+# ---------------------------------------------------------------------------
+# Package-data helpers
+# ---------------------------------------------------------------------------
 
+def _read_pkg_text(package: str, *path_parts: str) -> str:
+    """Read a text file bundled inside a Python package."""
+    return importlib.resources.files(package).joinpath(*path_parts).read_text()
+
+
+def _copy_pkg_file(package: str, path_parts: tuple[str, ...], dest: Path) -> None:
+    """Copy a text file from package data to a filesystem path."""
+    src = importlib.resources.files(package).joinpath(*path_parts)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(src.read_text())
+
+
+# ---------------------------------------------------------------------------
+# Imports from the core package (installed alongside eic)
+# ---------------------------------------------------------------------------
 from core.manifest import ModuleManifest, read_manifest, write_manifest
 from core.kind_specs import KIND_SPECS, INTEGRATION_INFO_SECTIONS
 from core.schemas import validate_module_name
 from core.llms_gen import generate_root_llms_txt, generate_structure_md, generate_system_md
 
 
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
 def _copy_static_files():
     """Copy static template files into context/."""
     for name in ["principles.md", "module_features.md"]:
-        src = TEMPLATES_DIR / name
-        if src.exists():
-            shutil.copy2(src, CONTEXT_DIR / name)
-    if SECRETS_MD.exists():
-        shutil.copy2(SECRETS_MD, CONTEXT_DIR / "secrets.md")
+        _copy_pkg_file("core", ("templates", name), CONTEXT_DIR / name)
+    _copy_pkg_file("eic", ("data", "secrets.md"), CONTEXT_DIR / "secrets.md")
 
 
 def _regenerate():
     """Regenerate all auto-generated files in context/."""
-    template_content = (TEMPLATES_DIR / "system.md").read_text()
+    template_content = _read_pkg_text("core", "templates", "system.md")
     generate_root_llms_txt(CONTEXT_DIR)
     generate_structure_md(CONTEXT_DIR)
     generate_system_md(CONTEXT_DIR, template_content)
@@ -65,11 +81,18 @@ def _generate_env_example():
             for secret in manifest.secrets:
                 lines.append(f"{secret}=")
             lines.append("")
-    env_example = SCRIPT_DIR / ".env.example"
+    env_example = Path.cwd() / ".env.example"
     if lines:
         env_example.write_text("\n".join(lines) + "\n")
     elif env_example.exists():
         env_example.unlink()
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+_EXAMPLE_FILES = ["module.yaml", "llms.txt", "info.md"]
 
 
 def cmd_init(args):
@@ -77,8 +100,15 @@ def cmd_init(args):
     MODULES_DIR.mkdir(exist_ok=True)
     CONTEXT_DIR.mkdir(exist_ok=True)
 
+    # Seed the example module when modules-repo is empty
+    if not any(MODULES_DIR.iterdir()):
+        example_dest = MODULES_DIR / "example"
+        example_dest.mkdir(parents=True, exist_ok=True)
+        for fname in _EXAMPLE_FILES:
+            _copy_pkg_file("eic", ("data", "example", fname), example_dest / fname)
+
     # Create .gitignore if it doesn't exist
-    gitignore = SCRIPT_DIR / ".gitignore"
+    gitignore = Path.cwd() / ".gitignore"
     if not gitignore.exists():
         gitignore.write_text(".env\n")
     else:
@@ -89,7 +119,7 @@ def cmd_init(args):
     _regenerate()
     print("Created modules-repo/")
     print("Created context/")
-    print("Ready. Create your first module with: python eic.py new integration <name>")
+    print("Ready. Create your first module with: eic new integration <name>")
 
 
 def cmd_new(args):
@@ -148,13 +178,13 @@ def cmd_new(args):
 
     for f in spec.required_files:
         print(f"Created modules-repo/{name}/{f}")
-    print(f'Module "{name}" created. Edit the files, then load it with: python eic.py load {name}')
+    print(f'Module "{name}" created. Edit the files, then load it with: eic load {name}')
 
 
 def cmd_load(args):
     """Load modules into the workspace via symlinks."""
     if not CONTEXT_DIR.exists():
-        print("Error: workspace not initialized. Run: python eic.py init")
+        print("Error: workspace not initialized. Run: eic init")
         sys.exit(1)
 
     for name in args.names:
@@ -197,7 +227,7 @@ def cmd_unload(args):
 def cmd_ls(args):
     """List all modules and their status."""
     if not MODULES_DIR.exists():
-        print("No modules-repo/ directory. Run: python eic.py init")
+        print("No modules-repo/ directory. Run: eic init")
         return
 
     loaded_names = set()
@@ -207,7 +237,7 @@ def cmd_ls(args):
     all_modules = sorted(p.name for p in MODULES_DIR.iterdir() if p.is_dir())
 
     if not all_modules:
-        print("No modules found. Create one with: python eic.py new integration <name>")
+        print("No modules found. Create one with: eic new integration <name>")
         return
 
     loaded = [(n, read_manifest(MODULES_DIR / n)) for n in all_modules if n in loaded_names]
@@ -238,12 +268,12 @@ def cmd_ls(args):
 def cmd_env(args):
     """Check which secret variables are set or missing."""
     if not CONTEXT_DIR.exists():
-        print("Error: workspace not initialized. Run: python eic.py init")
+        print("Error: workspace not initialized. Run: eic init")
         sys.exit(1)
 
     # Try to load .env file into a dict (don't inject into os.environ)
     env_vars = dict(os.environ)
-    env_file = SCRIPT_DIR / ".env"
+    env_file = Path.cwd() / ".env"
     if env_file.exists():
         for line in env_file.read_text().splitlines():
             line = line.strip()
@@ -352,9 +382,13 @@ def cmd_validate(args):
         sys.exit(1)
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 def main():
     parser = argparse.ArgumentParser(
-        prog="eic.py",
+        prog="eic",
         description="Everything Is Context — module manager",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")

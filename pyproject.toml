@@ -4,6 +4,22 @@ version = "0.1.0"
 description = "Agent-agnostic context management system"
 requires-python = ">=3.11"
 dependencies = ["pydantic", "pyyaml"]
+license = "MIT"
+
+[project.urls]
+Homepage = "https://everythingiscontext.com"
+Repository = "https://github.com/bleak-ai/everythingiscontext"
 
 [project.scripts]
-eic = "eic:main"
+eic = "eic.cli:main"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["core", "eic"]
+
+[tool.setuptools.package-data]
+"core" = ["templates/*.md"]
+"eic" = ["data/**/*"]

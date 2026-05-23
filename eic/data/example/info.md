@@ -15,16 +15,16 @@ No authentication needed — this is a documentation-only module.
 
 ## Operations
 - Read this module's files to understand the structure
-- Create your own module with `python eic.py new integration <name>`
+- Create your own module with `eic new integration <name>`
 
 ## Examples
 ```bash
 # Create a new integration module
-python eic.py new integration stripe
+eic new integration stripe
 
 # Load it into the workspace
-python eic.py load stripe
+eic load stripe
 
 # Check module structure
-python eic.py validate stripe
+eic validate stripe
 ```

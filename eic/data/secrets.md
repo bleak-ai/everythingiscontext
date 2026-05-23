@@ -7,7 +7,7 @@ Secrets are environment variables. Modules declare which variables they need in 
 1. Check a module's `module.yaml` for its `secrets:` list
 2. Values live in `.env` at the project root (gitignored, never committed)
 3. `.env.example` is auto-generated with all required variable names
-4. Run `python eic.py env` to check which variables are set or missing
+4. Run `eic env` to check which variables are set or missing
 
 ## Rules
 
