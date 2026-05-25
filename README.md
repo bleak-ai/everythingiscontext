@@ -1,84 +1,115 @@
-# Everything Is Context
+# EIC Cloud
 
-An open-source, agent-agnostic context management system. Create, organize, and load context modules into a workspace that any coding agent can read and operate on.
+Give your agent a knowledge base it can navigate itself.
 
-## Quick start
+EIC Cloud is a context management platform for AI agents. Instead of re-explaining your stack every conversation, organize your knowledge as reusable **context modules** — plain markdown in Git that any AI agent can navigate independently.
 
-```bash
-# Install
-curl -LsSf https://everythingiscontext.com/eic/install.sh | sh
-
-# Create a project
-mkdir my-project && cd my-project
-eic init
-
-# Create a module
-eic new integration stripe
-
-# Edit the module files
-# Fill in modules-repo/stripe/info.md with your Stripe docs, auth details, operations
-
-# Load it
-eic load stripe
-
-# Point your agent at context/
-# Open Claude Code, Codex, Cursor, or any coding agent in the context/ directory
-```
-
-**Alternative install methods:**
-
-```bash
-# Via uv (if already installed)
-uv tool install everythingiscontext
-
-# Via pip
-pip install everythingiscontext
-```
-
-## How it works
-
-Modules live in `modules-repo/`. Each module is a folder with:
-- `module.yaml` — metadata (name, kind, secrets, dependencies)
-- `llms.txt` — table of contents the agent reads first
-- A starter file (`info.md`, `brief.md`, or `steps.md` depending on kind)
-
-When you load a module, it gets symlinked into `context/` and the workspace files are regenerated:
-- `context/system.md` — agent instructions + table of loaded modules
-- `context/llms.txt` — index of loaded modules
-- `context/structure.md` — module schema reference
-
-The agent reads `system.md` -> `llms.txt` -> follows links into modules.
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `eic init` | Initialize workspace |
-| `eic new <kind> <name>` | Create a module (kind: integration, task, workflow) |
-| `eic load <name> [...]` | Load modules into workspace |
-| `eic unload <name>` | Remove module from workspace |
-| `eic ls` | List all modules and status |
-| `eic env` | Check secret variable status |
-| `eic validate [name]` | Validate module structure |
-
-## Module kinds
-
-- **integration** — Reusable access to an external service, API, or database
-- **task** — A bounded outcome needing progress tracking
-- **workflow** — A repeatable procedure that improves across runs
-
-## Secrets
-
-Modules can declare required environment variables in `module.yaml`. Values go in `.env` (gitignored). See `context/secrets.md` for details.
-
-## Platform compatibility
-
-Module loading uses symlinks. On Windows, enable Developer Mode or run as admin. Alternatively, copy module directories into `context/` manually.
-
-## Upgrading to EIC Cloud
-
-For a full web UI with secrets management, cron jobs, benchmarks, and more -- check out [EIC Cloud](https://everythingiscontext.com).
+![EIC Cloud demo](demo/eic-claude-demo.gif)
 
 ---
 
-Built by [Bleak AI](https://bleakai.com) | [everythingiscontext.com](https://everythingiscontext.com)
+### Table of Contents
+
+- [EIC Cloud](#eic-cloud)
+    - [Table of Contents](#table-of-contents)
+  - [Features](#features)
+  - [Supported Agents](#supported-agents)
+  - [Self-host with Docker](#self-host-with-docker)
+  - [Run Locally (Development)](#run-locally-development)
+  - [Test with Claude Code](#test-with-claude-code)
+  - [Architecture](#architecture)
+  - [Contributing](#contributing)
+
+---
+
+## Features
+
+**Three module types:**
+
+- **Integrations** — Your external services: Stripe setup, database schema, CI pipeline, API docs
+- **Workflows** — How you deploy, triage, onboard — agents follow your process step by step
+- **Tasks** — Current work items; agents pick up where you left off
+
+**Platform capabilities:**
+
+- Visual module editor with live markdown preview
+- Built-in AI chat with your full context loaded
+- Modular context selection — enable only the modules each conversation needs
+- Secret management via Varlock — secrets injected at runtime, never in files
+- Git sync — modules live in a repo; pull, push, and review changes from the UI
+- Session persistence across restarts
+- Cron jobs for automated background tasks
+
+## Supported Agents
+
+EIC modules are plain markdown + YAML — they work with any agent that reads files:
+
+- Claude Code
+- Cursor
+- Codex
+- pi.dev
+
+## Self-host with Docker
+
+```bash
+cp .env.example platform/.env   # fill in your credentials
+docker compose up -d
+```
+
+Open http://localhost:9090
+
+Update to latest version:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+The container includes Python 3.12, Node.js 22, Claude Code, Varlock, and Git. Modules are loaded from GitHub at runtime via the `GH_OWNER`/`GH_REPO`/`GH_TOKEN` env vars.
+
+## Run Locally (Development)
+
+```bash
+cd platform
+uv sync
+uv run start
+```
+
+To build from source with Docker:
+
+```bash
+cd platform
+docker build -t eic-cloud:local .
+docker run --rm -p 9090:9090 --env-file .env.demo eic-cloud:local
+```
+
+## Test with Claude Code
+
+1. Start the server (locally or with Docker)
+2. Open http://localhost:9090 and select the modules you want to load
+3. Open Claude Code from the context directory:
+   ```bash
+   cd platform/src/context
+   claude
+   ```
+4. Claude will read the `CLAUDE.md` in that directory and work only with the loaded modules
+
+## Architecture
+
+```
+├── core/            # Shared library — module specs, manifest parsing, templates
+├── demo/            # CLI demo script + GIF
+├── eic/             # CLI entry point
+├── pyproject.toml   # Package definition
+└── README.md
+```
+
+**Backend:** Python 3.12, FastAPI, SQLite, Varlock
+**Frontend:** React 19, Vite, TanStack Router, Tailwind CSS, Radix UI
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/your-feature`
+3. Commit your changes: `git commit -m 'Add your feature'`
+4. Push to the branch: `git push origin feature/your-feature`
+5. Open a Pull Request
