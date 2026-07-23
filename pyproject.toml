@@ -1,0 +1,30 @@
+[project]
+name = "gcontext-ai"
+version = "0.3.0"
+description = "Your agent's state in a folder, served at a URL. Any MCP runtime attaches and becomes your agent."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "bleak-ai" }]
+requires-python = ">=3.11"
+keywords = ["mcp", "agents", "ai", "state", "context"]
+dependencies = [
+    "fastmcp>=2.0.0",
+    "pyyaml>=6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/bleak-ai/gcontext"
+Repository = "https://github.com/bleak-ai/gcontext"
+
+[project.scripts]
+gcontext = "gcontext.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gcontext"]

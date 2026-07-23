@@ -1,0 +1,572 @@
+"""gcontext CLI. One server you start, harnesses connect to its URL. State is files."""
+
+import argparse
+import json
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+from . import flows as flows_mod
+from . import server
+
+BOLD = "\033[1m"
+DIM = "\033[2m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+RESET = "\033[0m"
+
+DEFAULT_PORT = 4242
+
+STATUS_COLOR = {
+    "loaded": GREEN,
+    "on demand": DIM,
+    "skipped": DIM,
+    "uncontrolled": YELLOW,
+}
+
+
+def print_ledger(mode: str):
+    for i, pipe in enumerate(server.build_ledger(mode), 1):
+        color = STATUS_COLOR.get(pipe["status"], "")
+        label = f"{pipe['label']} ".ljust(36, ".")
+        status = pipe["status"].upper() if pipe["status"] == "uncontrolled" else pipe["status"]
+        print(f"  {i}. [{pipe['id']}] {label} {color}{status}{RESET} {DIM}{pipe['detail']}{RESET}")
+
+
+INIT_GCONTEXT_YAML = """\
+name: {name}
+description: Describe what this agent is for.
+# port: 4242
+"""
+
+INIT_INSTRUCTIONS = """\
+# Instructions
+
+You are the agent for this gcontext project. Your state lives in this folder:
+read it with read_context, keep it current with write_context.
+
+- Call overview() first to see connections, modules, flows, and the context ledger.
+- Call flows() to see multi-step work and what is actionable right now.
+- Use run_script for anything that needs an API: secrets are injected as env
+  vars (you only ever see their names), deps are preinstalled.
+- Record what you learn: update the relevant index.md or module so the next
+  session starts smarter than this one.
+"""
+
+INIT_SECRETS = """\
+# Secret VALUES live here and never leave this machine (this file is gitignored).
+# Each connection's connection.yaml declares which NAMEs it needs.
+# EXAMPLE_API_KEY=...
+"""
+
+INIT_AGENT_GITIGNORE = """\
+secrets.env
+.venv/
+"""
+
+INIT_CONNECTION_YAML = """\
+name: httpbin
+description: Example connection with no secrets, for trying run_script.
+secrets: []
+deps:
+  - requests
+"""
+
+INIT_CONNECTION_INDEX = """\
+# httpbin
+
+A dummy connection to try run_script without needing any secret. Replace it
+with a real service: declare secret NAMEs and deps in connection.yaml, put
+values in secrets.env, and document usage patterns here.
+
+```python
+import requests
+print(requests.get("https://httpbin.org/get").json()["url"])
+```
+"""
+
+INIT_FLOW_YAML = """\
+name: demo-brief
+description: Demo flow. Capture a brief, draft from it, then finalize.
+steps:
+  - id: capture
+    description: Capture what the user wants covered
+    produces:
+      - flows/demo-brief/brief.md
+    instructions: |
+      Ask the user what they want a short write-up about and save the answers
+      to flows/demo-brief/brief.md as a short markdown brief.
+
+  - id: draft
+    description: Draft the write-up from the brief
+    needs:
+      - flows/demo-brief/brief.md
+    produces:
+      - flows/demo-brief/draft.md
+    instructions: |
+      Read the brief and write a first draft to flows/demo-brief/draft.md.
+
+  - id: finalize
+    description: Polish the draft into the final version
+    needs:
+      - flows/demo-brief/brief.md
+      - flows/demo-brief/draft.md
+    produces:
+      - flows/demo-brief/final.md
+    instructions: |
+      Tighten the draft into flows/demo-brief/final.md. If the brief changed
+      since the draft, this step shows as stale: redo it from the current brief.
+"""
+
+
+def cmd_init(args):
+    target = Path(args.directory).resolve()
+    if target.exists() and any(target.iterdir()):
+        print(f"Error: {target} already exists and is not empty.", file=sys.stderr)
+        sys.exit(1)
+
+    name = target.name
+    files = {
+        "gcontext.yaml": INIT_GCONTEXT_YAML.format(name=name),
+        "instructions.md": INIT_INSTRUCTIONS,
+        "secrets.env": INIT_SECRETS,
+        ".gitignore": INIT_AGENT_GITIGNORE,
+        "connections/httpbin/connection.yaml": INIT_CONNECTION_YAML,
+        "connections/httpbin/index.md": INIT_CONNECTION_INDEX,
+        "flows/demo-brief/flow.yaml": INIT_FLOW_YAML,
+        "modules/.gitkeep": "",
+        "archive/.gitkeep": "",
+    }
+    for rel, content in files.items():
+        f = target / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(content)
+
+    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} created {name} at {target}")
+    print()
+    print("The folder IS your agent's state: version it with git, edit it freely.")
+    print()
+    print("Next steps:")
+    print(f"  1. gcontext up {args.directory}          start the server")
+    print(f"  2. gcontext connect claude        attach a harness (or: desktop, codex, cursor)")
+    print(f"  3. gcontext chat {args.directory}        or talk to a dedicated, fully controlled session")
+    print()
+    print(f"{DIM}See what reaches the agent, anytime: gcontext context {args.directory}{RESET}")
+
+
+def find_project_dir(path: str | None) -> Path:
+    p = Path(path).resolve() if path else Path.cwd()
+    if (p / "gcontext.yaml").exists():
+        return p
+    print(f"Error: no gcontext.yaml found in {p}", file=sys.stderr)
+    print("Run from a gcontext project directory or pass the path as an argument.", file=sys.stderr)
+    sys.exit(1)
+
+
+def resolve_port(args) -> int:
+    if getattr(args, "port", None):
+        return args.port
+    config = server._load_gcontext_yaml()
+    return int(config.get("port", DEFAULT_PORT))
+
+
+def server_url(port: int) -> str:
+    return f"http://127.0.0.1:{port}/mcp"
+
+
+def fetch_status(port: int) -> dict | None:
+    """Query the running server. None means nothing is listening."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/status", timeout=2) as resp:
+            return json.loads(resp.read())
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def cmd_up(args):
+    project_dir = find_project_dir(args.project)
+    server.PROJECT_DIR = project_dir
+    config = server._load_gcontext_yaml()
+    name = config.get("name", project_dir.name)
+    port = resolve_port(args)
+    url = server_url(port)
+
+    running = fetch_status(port)
+    if running is not None:
+        print(f"Error: something already listens on port {port}", file=sys.stderr)
+        print(f"  ({running.get('name', 'unknown')} serving {running.get('project_dir', '?')})", file=sys.stderr)
+        sys.exit(1)
+
+    server.ensure_venv()
+
+    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {name}")
+    print(f"{DIM}State: {project_dir}{RESET}")
+    print()
+    print(f"Serving at {BOLD}{url}{RESET}")
+    print()
+    print("Connect a harness (once per harness, works from any directory):")
+    print(f"  Claude Code:     claude mcp add --transport http {name} {url}")
+    print(f"  Claude Desktop:  Settings -> Connectors -> Add custom connector -> {url}")
+    print(f'  Cursor:          "{name}": {{"url": "{url}"}} in ~/.cursor/mcp.json')
+    print(f'  Codex:           [mcp_servers.{name}] url = "{url}" in ~/.codex/config.toml')
+    print("  Details:         gcontext connect")
+    print()
+    print("Connections appear below as harnesses attach. Ctrl+C stops the server,")
+    print("and every harness cleanly loses access.")
+    print()
+
+    server.mcp.run(
+        transport="http", host="127.0.0.1", port=port, path="/mcp",
+        show_banner=False, log_level="warning",
+    )
+
+
+def cmd_status(args):
+    project_dir = find_project_dir(args.project)
+    server.PROJECT_DIR = project_dir
+
+    config = server._load_gcontext_yaml()
+    connections = server._load_connections()
+    secrets = server._load_secrets_env()
+    modules = server._discover_modules()
+    port = resolve_port(args)
+
+    name = config.get("name", project_dir.name)
+    desc = config.get("description", "")
+    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {name}")
+    if desc:
+        print(f"{DIM}{desc}{RESET}")
+    print(f"{DIM}State: {project_dir}{RESET}")
+    print()
+
+    live = fetch_status(port)
+    if live is None:
+        print(f"Server: {YELLOW}not running{RESET} {DIM}(start it: gcontext up){RESET}")
+    elif live.get("project_dir") != str(project_dir.resolve()):
+        print(f"Server: {YELLOW}port {port} is serving a different project{RESET}")
+        print(f"  {DIM}{live.get('name', '?')} at {live.get('project_dir', '?')}{RESET}")
+    else:
+        print(f"Server: {GREEN}up{RESET} at {server_url(port)}")
+        sessions = live.get("sessions", [])
+        if not sessions:
+            print(f"  {DIM}no harness connected yet{RESET}")
+        for s in sessions:
+            print(f"  {GREEN}{s['client']}{RESET} {DIM}{s['version']}{RESET}  connected {s['connected']}  last activity {s['last_seen']}")
+    print()
+
+    instructions = project_dir / "instructions.md"
+    if instructions.exists():
+        lines = len(instructions.read_text().splitlines())
+        print(f"Instructions: instructions.md ({lines} lines)")
+        print()
+
+    print("Connections:")
+    if not connections:
+        print(f"  {DIM}none defined{RESET}")
+    for cname, conn in connections.items():
+        missing = [s for s in conn.secrets if s not in secrets or not secrets[s]]
+        if missing:
+            print(f"  {cname}: {YELLOW}missing {', '.join(missing)}{RESET}")
+        else:
+            filled = len(conn.secrets)
+            print(f"  {cname}: {GREEN}ready{RESET} {DIM}({filled}/{filled} secrets){RESET}")
+    print()
+
+    if modules:
+        print("Modules:")
+        for mname, mod in modules.items():
+            suffix = f" {DIM}- {mod.description}{RESET}" if mod.description else ""
+            print(f"  {mname}{suffix}")
+        print()
+
+    all_flows = flows_mod.load_flows(project_dir)
+    if all_flows:
+        print("Flows:")
+        for fname, flow in all_flows.items():
+            board = flows_mod.flow_board(project_dir, flow)
+            done = sum(1 for s in board if s["status"] == "done")
+            ready = [s["id"] for s in flows_mod.actionable(board)]
+            if ready:
+                print(f"  {fname}: {done}/{len(board)} done, {GREEN}actionable: {', '.join(ready)}{RESET}")
+            else:
+                print(f"  {fname}: {done}/{len(board)} done")
+        print(f"  {DIM}details: gcontext flows{RESET}")
+        print()
+
+    archived_line = server._archived_line()
+    if archived_line:
+        print(f"{DIM}{archived_line}{RESET}")
+        print()
+
+    print(f"{DIM}No runtime included. Point any MCP client at the URL above.{RESET}")
+
+
+def cmd_connect(args):
+    project_dir = find_project_dir(args.project)
+    server.PROJECT_DIR = project_dir
+    config = server._load_gcontext_yaml()
+    name = config.get("name", project_dir.name)
+    port = resolve_port(args)
+    url = server_url(port)
+
+    live = fetch_status(port)
+    if live is None:
+        print(f"{YELLOW}Server not running.{RESET} Start it first, in this or another terminal:")
+        print()
+        print(f"  gcontext up {project_dir}")
+        print()
+
+    client = args.client
+
+    if client == "claude":
+        print(f"{BOLD}Claude Code{RESET}")
+        print()
+        print("Run once, from the directory where you use claude (or add --scope user")
+        print("to make it available everywhere):")
+        print()
+        print(f"  claude mcp add --transport http {name} {url}")
+
+    elif client == "desktop":
+        print(f"{BOLD}Claude Desktop{RESET}")
+        print()
+        print("Settings -> Connectors -> Add custom connector, then paste:")
+        print()
+        print(f"  {url}")
+
+    elif client == "codex":
+        print(f"{BOLD}Codex{RESET}")
+        print()
+        print("Add to ~/.codex/config.toml:")
+        print()
+        print(f"[mcp_servers.{name}]")
+        print(f'url = "{url}"')
+
+    elif client == "cursor":
+        print(f"{BOLD}Cursor{RESET}")
+        print()
+        print("Add to .cursor/mcp.json (project) or ~/.cursor/mcp.json (global):")
+        print()
+        print(json.dumps({"mcpServers": {name: {"url": url}}}, indent=2))
+
+    else:
+        print(f"{BOLD}Any MCP client{RESET}")
+        print()
+        print("gcontext speaks MCP over streamable HTTP. Point your client at:")
+        print()
+        print(f"  {url}")
+
+    print()
+    print("Context this client will receive:")
+    print_ledger("mcp")
+    print()
+    print(f"{DIM}Verify anytime with: gcontext status{RESET}")
+
+
+def cmd_context(args):
+    project_dir = find_project_dir(args.project)
+    server.PROJECT_DIR = project_dir
+    config = server._load_gcontext_yaml()
+    name = config.get("name", project_dir.name)
+
+    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {name}")
+    print(f"{DIM}Every pipe that inserts context into the agent, per mode.{RESET}")
+    print()
+    print(f"{BOLD}gcontext chat{RESET} {DIM}(dedicated claude, fully controlled){RESET}")
+    print_ledger("chat")
+    print()
+    print(f"{BOLD}MCP attach{RESET} {DIM}(any harness pointed at the URL, shared agent){RESET}")
+    print_ledger("mcp")
+
+
+FLOW_STATUS_COLOR = {
+    "ready": GREEN,
+    "stale": YELLOW,
+    "blocked": DIM,
+    "done": DIM,
+}
+
+
+def cmd_flows(args):
+    project_dir = find_project_dir(args.project)
+    server.PROJECT_DIR = project_dir
+    config = server._load_gcontext_yaml()
+    name = config.get("name", project_dir.name)
+
+    all_flows = flows_mod.load_flows(project_dir)
+    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {name}")
+    print(f"{DIM}Flow state is computed from files, nothing else tracks progress.{RESET}")
+    print()
+
+    if not all_flows:
+        print(f"{DIM}No flows defined in flows/*/flow.yaml{RESET}")
+        return
+
+    if args.flow:
+        if args.flow not in all_flows:
+            print(f"Error: no flow named {args.flow}. Available: {', '.join(all_flows)}", file=sys.stderr)
+            sys.exit(1)
+        all_flows = {args.flow: all_flows[args.flow]}
+
+    for flow in all_flows.values():
+        board = flows_mod.flow_board(project_dir, flow)
+        done = sum(1 for s in board if s["status"] == "done")
+        print(f"{BOLD}{flow.name}{RESET} {DIM}({done}/{len(board)} done){RESET}")
+        if flow.description:
+            print(f"{DIM}{flow.description}{RESET}")
+        for step in board:
+            color = FLOW_STATUS_COLOR.get(step["status"], "")
+            status = f"{color}{step['status']:<7}{RESET}"
+            print(f"  {status} {step['id']}: {step['description']}")
+            if step["status"] == "blocked":
+                print(f"          {DIM}waiting on: {', '.join(step['missing'])}{RESET}")
+            elif step["status"] == "ready":
+                print(f"          {DIM}complete by writing: {', '.join(step['missing'])}{RESET}")
+            elif step["status"] == "stale":
+                print(f"          {YELLOW}{', '.join(step['stale_needs'])} changed after the produces were written{RESET}")
+        print()
+
+
+CHAT_TOOLS = ",".join(
+    f"mcp__gcontext__{t}"
+    for t in ["overview", "read_context", "write_context", "run_script", "list_connections", "flows"]
+)
+
+
+def wait_for_server(port: int, project_dir: Path, timeout: float = 15.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        live = fetch_status(port)
+        if live is not None and live.get("project_dir") == str(project_dir.resolve()):
+            return True
+        time.sleep(0.3)
+    return False
+
+
+def cmd_chat(args):
+    project_dir = find_project_dir(args.project)
+    server.PROJECT_DIR = project_dir
+    config = server._load_gcontext_yaml()
+    name = config.get("name", project_dir.name)
+    port = resolve_port(args)
+    url = server_url(port)
+
+    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {name}")
+    print()
+    print("Context loaded into this session:")
+    print_ledger("chat")
+    print()
+
+    own_server = None
+    live = fetch_status(port)
+    if live is not None and live.get("project_dir") != str(project_dir.resolve()):
+        print(f"Error: port {port} is serving a different project ({live.get('name', '?')})", file=sys.stderr)
+        sys.exit(1)
+    if live is None:
+        print(f"{DIM}Starting server at {url}...{RESET}")
+        own_server = subprocess.Popen(
+            [sys.executable, "-m", "gcontext.cli", "up", str(project_dir), "--port", str(port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if not wait_for_server(port, project_dir):
+            own_server.terminate()
+            print("Error: server did not come up.", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print(f"{DIM}Using the already running server at {url}{RESET}")
+
+    mcp_config = {"mcpServers": {"gcontext": {"type": "http", "url": url}}}
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False, prefix="gcontext-mcp-"
+    ) as f:
+        json.dump(mcp_config, f)
+        mcp_config_path = f.name
+
+    cmd = [
+        "claude",
+        "--mcp-config", mcp_config_path,
+        "--strict-mcp-config",
+        "--setting-sources", "",
+        "--allowedTools", CHAT_TOOLS,
+    ]
+    instructions = project_dir / "instructions.md"
+    if instructions.exists():
+        cmd.extend(["--system-prompt", instructions.read_text()])
+
+    print(f"{DIM}Starting claude...{RESET}")
+    try:
+        subprocess.run(cmd, cwd=project_dir)
+    finally:
+        Path(mcp_config_path).unlink(missing_ok=True)
+        if own_server is not None:
+            own_server.terminate()
+            try:
+                own_server.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                own_server.kill()
+            print(f"{DIM}Stopped the session's server.{RESET}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="gcontext",
+        description="Agent state in a folder, served at a URL. Bring your own runtime.",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    init_parser = subparsers.add_parser("init", help="Scaffold a new agent state folder")
+    init_parser.add_argument("directory", help="Directory to create (its name becomes the agent name)")
+
+    def add_common(p):
+        p.add_argument("project", nargs="?", help="Path to gcontext project directory")
+        p.add_argument("--port", type=int, help=f"Server port (default: {DEFAULT_PORT}, or port: in gcontext.yaml)")
+
+    up_parser = subparsers.add_parser("up", help="Start the server. Harnesses connect to its URL")
+    add_common(up_parser)
+
+    status_parser = subparsers.add_parser("status", help="Server up? Who is connected? Plus connections, secrets, modules")
+    add_common(status_parser)
+
+    connect_parser = subparsers.add_parser("connect", help="Show how to point a harness at the server URL")
+    connect_parser.add_argument(
+        "client",
+        nargs="?",
+        default="generic",
+        choices=["claude", "desktop", "codex", "cursor", "generic"],
+        help="Which MCP client to show instructions for",
+    )
+    add_common(connect_parser)
+
+    context_parser = subparsers.add_parser("context", help="Show the context ledger: every pipe into the agent, per mode")
+    add_common(context_parser)
+
+    flows_parser = subparsers.add_parser("flows", help="Show flow boards: step status computed from the files")
+    flows_parser.add_argument("--flow", help="Show a single flow by name")
+    add_common(flows_parser)
+
+    chat_parser = subparsers.add_parser("chat", help="Launch a dedicated claude session against this project")
+    add_common(chat_parser)
+
+    args = parser.parse_args()
+
+    commands = {
+        "init": cmd_init,
+        "up": cmd_up,
+        "status": cmd_status,
+        "connect": cmd_connect,
+        "context": cmd_context,
+        "flows": cmd_flows,
+        "chat": cmd_chat,
+    }
+    if args.command in commands:
+        commands[args.command](args)
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
