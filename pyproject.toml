@@ -1,7 +1,7 @@
 [project]
 name = "gcontext-ai"
 version = "0.3.0"
-description = "Your agent's state in a folder, served at a URL. Any MCP runtime attaches and becomes your agent."
+description = "The framework for building stateful agents. Your agent is a folder of state, served over MCP, used from any runtime."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "bleak-ai" }]

@@ -1,8 +1,10 @@
 # gcontext
 
-gcontext stores an AI agent's state (instructions, service connections, secrets, knowledge, work in progress) in a plain directory and serves it over MCP from a local HTTP server. MCP clients like Claude Code, Codex, Cursor, or Claude Desktop connect to that server and work against the shared state.
+The framework for building stateful agents.
 
-The point: runtimes forget everything between sessions. If the state lives in a folder instead, it persists, you can version it with git, and you can switch runtimes without losing anything. gcontext only manages that state. It has no chat loop, no LLM client, and no orchestration; the runtime you attach does the actual work.
+An agent built with gcontext is a folder: instructions, service connections, secrets, knowledge, and multi-step work, all as plain files you can version with git. gcontext serves that folder over MCP from a local HTTP server, and you use the agent from the tools you already work in: Claude Code, Claude Desktop, Codex, or Cursor.
+
+Runtimes forget everything between sessions; the folder doesn't. Because the state is separate from the runtime, the same agent works from any client and survives every session. gcontext ships no chat loop and no LLM client: the runtime you attach does the reasoning, gcontext keeps the state.
 
 ## Install
 
