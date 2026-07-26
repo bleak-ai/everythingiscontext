@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import socket
 import subprocess
 import sys
 import tempfile
@@ -68,27 +69,6 @@ secrets.env
 .venv/
 """
 
-INIT_CONNECTION_YAML = """\
-name: httpbin
-description: Example connection with no secrets, for trying run_script.
-secrets: []
-deps:
-  - requests
-"""
-
-INIT_CONNECTION_INDEX = """\
-# httpbin
-
-A dummy connection to try run_script without needing any secret. Replace it
-with a real service: declare secret NAMEs and deps in connection.yaml, put
-values in secrets.env, and document usage patterns here.
-
-```python
-import requests
-print(requests.get("https://httpbin.org/get").json()["url"])
-```
-"""
-
 INIT_FLOW_YAML = """\
 name: demo-brief
 description: Demo flow. Capture a brief, draft from it, then finalize.
@@ -135,8 +115,7 @@ def cmd_init(args):
         "instructions.md": INIT_INSTRUCTIONS,
         "secrets.env": INIT_SECRETS,
         ".gitignore": INIT_AGENT_GITIGNORE,
-        "connections/httpbin/connection.yaml": INIT_CONNECTION_YAML,
-        "connections/httpbin/index.md": INIT_CONNECTION_INDEX,
+        "connections/.gitkeep": "",
         "flows/demo-brief/flow.yaml": INIT_FLOW_YAML,
         "modules/.gitkeep": "",
         "archive/.gitkeep": "",
@@ -154,6 +133,11 @@ def cmd_init(args):
     print(f"  1. gcontext up {args.directory}          start the server")
     print(f"  2. gcontext connect claude        attach a harness (or: desktop, codex, cursor)")
     print(f"  3. gcontext chat {args.directory}        or talk to a dedicated, fully controlled session")
+    print()
+    print("Give the agent its first connection (any service with an API):")
+    print(f"  {args.directory}/connections/<service>/connection.yaml   secret NAMEs + Python deps")
+    print(f"  {args.directory}/connections/<service>/index.md          how to use the API, in your words")
+    print(f"  {args.directory}/secrets.env                             secret VALUES, stays on this machine")
     print()
     print(f"{DIM}See what reaches the agent, anytime: gcontext context {args.directory}{RESET}")
 
@@ -178,6 +162,41 @@ def server_url(port: int) -> str:
     return f"http://127.0.0.1:{port}/mcp"
 
 
+def port_is_free(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def find_free_port(start: int, attempts: int = 50) -> int:
+    for port in range(start, start + attempts):
+        if port_is_free(port):
+            return port
+    print(f"Error: no free port found in {start}-{start + attempts - 1}.", file=sys.stderr)
+    sys.exit(1)
+
+
+def persist_port(project_dir: Path, port: int):
+    """Write port: into gcontext.yaml, replacing an existing (or commented) port line."""
+    path = project_dir / "gcontext.yaml"
+    lines = path.read_text().splitlines() if path.exists() else []
+    out, replaced = [], False
+    for line in lines:
+        stripped = line.strip()
+        if not replaced and (stripped.startswith("port:") or stripped.startswith("# port:")):
+            out.append(f"port: {port}")
+            replaced = True
+        else:
+            out.append(line)
+    if not replaced:
+        out.append(f"port: {port}")
+    path.write_text("\n".join(out) + "\n")
+
+
 def fetch_status(port: int) -> dict | None:
     """Query the running server. None means nothing is listening."""
     try:
@@ -192,14 +211,27 @@ def cmd_up(args):
     server.PROJECT_DIR = project_dir
     config = server._load_gcontext_yaml()
     name = config.get("name", project_dir.name)
+    configured = config.get("port")
     port = resolve_port(args)
-    url = server_url(port)
 
-    running = fetch_status(port)
-    if running is not None:
-        print(f"Error: something already listens on port {port}", file=sys.stderr)
-        print(f"  ({running.get('name', 'unknown')} serving {running.get('project_dir', '?')})", file=sys.stderr)
-        sys.exit(1)
+    if not port_is_free(port):
+        running = fetch_status(port)
+        who = f" ({running.get('name', '?')} serving {running.get('project_dir', '?')})" if running else ""
+        if getattr(args, "port", None) or configured:
+            source = "--port" if getattr(args, "port", None) else "gcontext.yaml"
+            print(f"Error: port {port} (from {source}) is already in use{who}.", file=sys.stderr)
+            print("Free it, or pick another port with --port.", file=sys.stderr)
+            sys.exit(1)
+        chosen = find_free_port(port + 1)
+        print(f"{YELLOW}{BOLD}Port {port} is taken{who}.{RESET}")
+        print(f"{YELLOW}{BOLD}Using port {chosen} instead. Saved port: {chosen} to gcontext.yaml so this URL stays stable.{RESET}")
+        print()
+        port = chosen
+
+    if port != int(configured or DEFAULT_PORT):
+        persist_port(project_dir, port)
+
+    url = server_url(port)
 
     server.ensure_venv()
 

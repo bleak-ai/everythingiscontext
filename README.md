@@ -49,6 +49,35 @@ Markdown holds the context, YAML holds the config. Edit any of it with a text ed
 
 Connected clients get six tools: `overview`, `read_context`, `write_context`, `run_script`, `list_connections`, `flows`.
 
+## Your first connection
+
+`init` creates no connections: a connection is worth having when it points at a service you actually use. Adding one is three files, no command needed:
+
+```bash
+mkdir -p my-agent/connections/stripe
+```
+
+`connections/stripe/connection.yaml` declares what the connection needs, by name only:
+
+```yaml
+name: stripe
+description: Payments, test mode.
+secrets:
+  - STRIPE_API_KEY
+deps:
+  - stripe
+```
+
+Put the value in `secrets.env` (gitignored, never leaves your machine):
+
+```bash
+echo 'STRIPE_API_KEY=sk_test_...' >> my-agent/secrets.env
+```
+
+And write `connections/stripe/index.md`: what the service is for, which endpoints matter, any usage patterns worth remembering. The agent reads this before writing scripts, and updates it as it learns.
+
+That's it. The server picks the connection up on the next tool call (no restart), `gcontext status` shows whether every declared secret has a value, and the agent can now call the API through `run_script` without ever seeing the key.
+
 ## Context ledger
 
 `gcontext context` lists every channel through which context reaches the agent, marked as `loaded` (pushed at start), `on demand` (agent pulls it via a visible tool call), `skipped` (closed by a launch flag), or `uncontrolled` (owned by the runtime, outside gcontext's view). gcontext only inserts context through the channels on that list. If you want to know what the agent is seeing, this is the answer.
