@@ -1,0 +1,2 @@
+name: ops-agent
+description: An operations agent that manages Stripe billing and Cloudflare infrastructure.

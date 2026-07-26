@@ -102,6 +102,12 @@ Anything under `archive/` is skipped when scanning, but stays readable by path, 
 | `gcontext flows [dir]` | Print the flow boards |
 | `gcontext chat [dir]` | Launch a dedicated claude session against the folder |
 
+## Going further
+
+- [examples/ops-agent](examples/ops-agent): a complete agent folder with connections, modules, a flow, and an archived module
+- [docs/design.md](docs/design.md): why gcontext is built this way, decision by decision
+- [docs/modules.md](docs/modules.md): writing portable, shareable modules
+
 ## Scope
 
 Local only. The server binds `127.0.0.1` without auth, so it is not reachable from outside your machine and should stay that way. A remote variant (same model, URL plus token) is planned but not part of this release.

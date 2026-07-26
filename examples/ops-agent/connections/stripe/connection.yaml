@@ -1,0 +1,7 @@
+name: stripe
+description: Payment processing via Stripe API
+secrets:
+  - STRIPE_API_KEY
+  - STRIPE_WEBHOOK_SECRET
+deps:
+  - stripe
