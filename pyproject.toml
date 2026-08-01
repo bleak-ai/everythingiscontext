@@ -1,6 +1,6 @@
 [project]
 name = "gcontext-ai"
-version = "0.3.1"
+version = "0.4.0"
 description = "The framework for building stateful agents. Your agent is a folder of state, served over MCP, used from any runtime."
 readme = "README.md"
 license = { text = "MIT" }
@@ -28,3 +28,16 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gcontext"]
+
+# The built dashboard rides inside the wheel; hatchling fails the build if
+# web/dist is missing, so `make build` (vite first) is the only build path.
+# artifacts: web/dist is gitignored, and hatchling drops VCS-ignored files
+# unless they are declared as build artifacts.
+[tool.hatch.build]
+artifacts = ["web/dist"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"web/dist" = "gcontext/web_dist"
+
+[tool.hatch.build.targets.sdist]
+only-include = ["src", "web/dist", "tests", "README.md", "LICENSE"]

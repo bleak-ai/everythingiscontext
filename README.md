@@ -32,7 +32,7 @@ claude mcp add --transport http my-agent http://127.0.0.1:4242/mcp
 ```
 my-agent/
   gcontext.yaml          # name, description, optional port
-  instructions.md        # standing instructions for whatever runtime attaches
+  instructions.md        # pushed to every agent at connect: what it starts with
   secrets.env            # secret values, gitignored
 
   connections/           # services the agent can use
@@ -41,13 +41,14 @@ my-agent/
       index.md           # API notes, usage patterns
 
   modules/               # accumulated knowledge
-  flows/                 # multi-step work, tracked as files (see below)
   archive/               # excluded from scanning, still readable
 ```
 
-Markdown holds the context, YAML holds the config. Edit any of it with a text editor; the server reads the files on demand, so changes apply immediately.
+Markdown holds the context, YAML holds the config. Edit any of it with a text editor; the server reads the files on demand, so changes apply immediately. Two exceptions load at server start and need a restart to pick up edits: `instructions.md` (pushed in the MCP handshake) and command files.
 
-Connected clients get six tools: `overview`, `read_context`, `write_context`, `run_script`, `list_connections`, `flows`.
+Connected clients get six tools: `overview`, `read_file`, `write_file`, `list_dir`, `grep`, `run_script`.
+
+`run_script` runs either ad-hoc code or a saved script by path (`scripts/` folders hold proven procedures, so they are reused instead of rewritten). Files under `connections/*/commands/` and `modules/*/commands/` register as MCP prompts, which Claude Code shows as slash commands; see "Commands" below.
 
 ## Your first connection
 
@@ -80,34 +81,25 @@ That's it. The server picks the connection up on the next tool call (no restart)
 
 ## Context ledger
 
-`gcontext context` lists every channel through which context reaches the agent, marked as `loaded` (pushed at start), `on demand` (agent pulls it via a visible tool call), `skipped` (closed by a launch flag), or `uncontrolled` (owned by the runtime, outside gcontext's view). gcontext only inserts context through the channels on that list. If you want to know what the agent is seeing, this is the answer.
+`gcontext context` lists every channel through which context reaches the agent, marked as `loaded` (pushed at connect), `on demand` (agent pulls it via a visible tool call), `skipped` (nothing to push), or `uncontrolled` (owned by the runtime, outside gcontext's view). gcontext only inserts context through the channels on that list. If you want to know what the agent is seeing, this is the answer.
+
+## Controlled session
+
+The ledger marks runtime-owned pipes (the runtime's system prompt, its config files, its other MCP servers) as `uncontrolled`, because gcontext cannot close them. If you want a claude session with those pipes closed, launch claude yourself with its own flags; there is no gcontext command for this, since it is a runtime invocation, not framework behavior:
+
+```bash
+claude --mcp-config '{"mcpServers":{"gcontext":{"type":"http","url":"http://127.0.0.1:4242/mcp"}}}' \
+       --strict-mcp-config \
+       --setting-sources ""
+```
+
+`--strict-mcp-config` ignores every other configured MCP server, and `--setting-sources ""` skips CLAUDE.md files and user settings. Your `instructions.md` still arrives through the MCP handshake, like in any session. Adjust the URL to your project's port.
 
 ## Secrets
 
-`connection.yaml` declares secret names; `secrets.env` holds the values. When the agent calls `run_script`, the values are injected as environment variables and scrubbed from the script's output. The agent can know that `STRIPE_API_KEY` exists and use it in a script, but never reads the value. `secrets.env` is gitignored by `init` and the `write_context` tool refuses to touch it.
+`connection.yaml` declares secret names; `secrets.env` holds the values. When the agent calls `run_script`, the values are injected as environment variables and scrubbed from the script's output. The agent can know that `STRIPE_API_KEY` exists and use it in a script, but never reads the value. `secrets.env` is gitignored by `init` and the `write_file` tool refuses to touch it.
 
 `run_script` executes Python in a per-project venv with each connection's declared deps preinstalled (via uv).
-
-## Flows
-
-A flow is a YAML file describing multi-step work as file dependencies:
-
-```yaml
-steps:
-  - id: draft
-    needs: [flows/brief/brief.md]
-    produces: [flows/brief/draft.md]
-    instructions: Read the brief, write the draft.
-```
-
-Step status is derived from the filesystem, like make targets:
-
-- `blocked`: a needed file doesn't exist
-- `ready`: needs exist, produces don't
-- `stale`: a needed file was modified after the produced files
-- `done`: everything exists and is up to date
-
-There is no engine and no stored run state. A step is completed by writing the files it declares, whether that's done by an attached runtime, a script, or you in an editor. If an upstream file changes, downstream steps become stale on the next read. `gcontext flows` prints the board; attached clients get the same via the `flows()` tool, which includes step instructions only for steps that are currently actionable.
 
 ## Archiving
 
@@ -121,6 +113,34 @@ Anything under `archive/` is skipped when scanning, but stays readable by path, 
 
 ## Commands
 
+A command is a user-invokable entry point stored next to the knowledge it belongs to: a file under `connections/<name>/commands/` or `modules/<name>/commands/`. The server registers each one as an MCP prompt named `<owner>__<command>`; Claude Code shows it as a slash command (`/mcp__<server>__<owner>__<command>`). Prompts cost no tool-schema context: a command's text enters the conversation only when you invoke it.
+
+Two file types:
+
+- `.md`: YAML frontmatter (description, parameters), then the body that gets injected, with `$name` placeholders filled from the arguments.
+
+  ```markdown
+  ---
+  description: Draft a refund reply
+  parameters:
+    - name: email
+      required: true
+  ---
+  Draft a refund reply for $email and show it to the user.
+  ```
+
+- `.py`: a runnable script with the same frontmatter as a `# ---` comment block at the top. Invoking it instructs the agent to run the file through `run_script`, with the arguments passed as `params` (they reach the script as `PARAM_<NAME>` env vars).
+
+Commands are discovered at server start; restart to pick up new files.
+
+## Dashboard
+
+`gcontext up` also serves a read-only dashboard at the server root, for example `http://127.0.0.1:4242/`. It shows the project overview and context ledger, connections with secret status (names only, never values), modules, commands, a file browser, and a live activity feed of every tool call agents make. The feed lives in server memory and empties on restart. The dashboard changes nothing; agents make the changes.
+
+Developing the dashboard itself needs node: `make web-dev` runs a Vite dev server on `http://localhost:5179` that proxies to the gcontext server, and `make web-build` produces the static bundle that `gcontext up` serves.
+
+## CLI
+
 | Command | Description |
 |---|---|
 | `gcontext init <dir>` | Scaffold a new state folder |
@@ -128,12 +148,10 @@ Anything under `archive/` is skipped when scanning, but stays readable by path, 
 | `gcontext status [dir]` | Server state, connected clients, state overview |
 | `gcontext connect [client]` | Connection steps for claude, desktop, codex, cursor |
 | `gcontext context [dir]` | Print the context ledger |
-| `gcontext flows [dir]` | Print the flow boards |
-| `gcontext chat [dir]` | Launch a dedicated claude session against the folder |
 
 ## Going further
 
-- [examples/ops-agent](examples/ops-agent): a complete agent folder with connections, modules, a flow, and an archived module
+- [examples/ops-agent](examples/ops-agent): a complete agent folder with connections, modules, a command, and an archived module
 - [docs/design.md](docs/design.md): why gcontext is built this way, decision by decision
 - [docs/modules.md](docs/modules.md): writing portable, shareable modules
 

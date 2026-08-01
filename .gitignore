@@ -7,3 +7,7 @@ dist/
 
 # secret values never leave the machine
 secrets.env
+
+# dashboard build artifacts
+web/node_modules/
+src/gcontext/web_dist/

@@ -1,33 +1,106 @@
-"""gcontext MCP server. Reads a project directory and exposes it to any MCP client."""
+"""The MCP surface: everything an attached agent can reach, in one file.
 
-import os
+Six tools (defined below, their agent-facing text in prompts/tools/*.md),
+commands registered as prompts, a /status route, and session tracking.
+The actual work lives in the per-concern modules:
+
+    fs.py        read_file / write_file / list_dir / grep (path confinement, guards)
+    exec.py      run_script (venv, secrets injection, output scrubbing)
+    state.py     connections / modules / archive scanning
+    secrets.py   secrets.env parsing and output scrubbing
+    ledger.py    the context ledger
+    commands.py  commands/ folders -> MCP prompts
+
+If it is not in this file, the agent cannot invoke it.
+"""
+
+import itertools
+import json
 import sys
+import time
+from collections import deque
 from datetime import datetime
 from pathlib import Path
-import subprocess
-import tempfile
 
-import yaml
 from fastmcp import FastMCP
 from fastmcp.server.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from . import flows as flows_mod
-from .models import ConnectionManifest, ModuleManifest
+from . import commands as commands_mod
+from . import exec as exec_mod
+from . import fs
+from . import ledger as ledger_mod
+from . import secrets as secrets_mod
+from . import state
 
 mcp = FastMCP("gcontext")
 
 # Set by cli.py before the server starts
 PROJECT_DIR: Path = Path(".")
 
+# Agent-facing tool text lives in markdown, not in code.
+_PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+
+def _tool_doc(name: str) -> str:
+    return (_PROMPTS_DIR / "tools" / f"{name}.md").read_text().strip()
+
+
 # Live MCP sessions, keyed by session id: {"client": ..., "connected": ..., "last_seen": ...}
 SESSIONS: dict[str, dict] = {}
+
+# Activity feed for the dashboard: in-memory ring buffer, gone on restart.
+EVENTS: deque = deque(maxlen=300)
+_EVENT_SEQ = itertools.count(1)
 
 
 def _session_id(context) -> str:
     ctx = getattr(context, "fastmcp_context", None)
     return getattr(ctx, "session_id", None) or "session"
+
+
+def record_event(session: str, kind: str, name: str, detail: str = "",
+                 preview: str = "", error: bool = False, tier: int = 1,
+                 tokens_in: int = 0, tokens_out: int = 0, duration_ms: int = 0):
+    EVENTS.append({
+        "id": next(_EVENT_SEQ),
+        "ts": int(time.time() * 1000),
+        "session": session,
+        "kind": kind,
+        "name": name,
+        "detail": detail,
+        "preview": preview,
+        "error": error,
+        "tier": tier,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "duration_ms": duration_ms,
+    })
+
+
+def _event_detail(name: str, arguments: dict) -> str:
+    """Summarize tool arguments for the feed. Never file content or code:
+    the feed goes to a browser, tool arguments may hold whole documents."""
+    if name == "write_file":
+        path = arguments.get("path", "?")
+        return f"{path} ({len(arguments.get('content') or '')} bytes)"
+    if name == "grep":
+        pattern = arguments.get("pattern", "?")
+        path = arguments.get("path") or "."
+        return f"{pattern!r} in {path}"
+    if name == "run_script":
+        if arguments.get("path"):
+            return str(arguments["path"])
+        return f"inline code ({len(arguments.get('code') or '')} chars)"
+    if arguments.get("path"):
+        return str(arguments["path"])
+    return ", ".join(sorted(arguments)) if arguments else ""
+
+
+def _result_text(result) -> str:
+    content = getattr(result, "content", None) or []
+    return "\n".join(t for t in (getattr(b, "text", None) for b in content) if t)
 
 
 class ConnectionTracker(Middleware):
@@ -45,7 +118,38 @@ class ConnectionTracker(Middleware):
             "connected": now,
             "last_seen": now,
         }
+        record_event(_session_id(context), "connect", client,
+                     detail=version, tier=0)
         print(f"  + {client} {version} connected ({now})", file=sys.stderr)
+        return await call_next(context)
+
+    async def on_call_tool(self, context, call_next):
+        name = getattr(context.message, "name", "?")
+        arguments = getattr(context.message, "arguments", None) or {}
+        detail = _event_detail(name, arguments)
+        tokens_in = len(json.dumps(arguments, default=str)) // 4
+        start = time.perf_counter()
+        try:
+            result = await call_next(context)
+        except Exception as exc:
+            record_event(_session_id(context), "error", name, detail=detail,
+                         preview=str(exc)[:400], error=True, tokens_in=tokens_in,
+                         duration_ms=round((time.perf_counter() - start) * 1000))
+            raise
+        text = _result_text(result)
+        preview = secrets_mod.scrub(text[:400], secrets_mod.load(PROJECT_DIR))
+        record_event(_session_id(context), "tool", name, detail=detail,
+                     preview=preview, error=text.startswith("Error:"),
+                     tokens_in=tokens_in, tokens_out=len(text) // 4,
+                     duration_ms=round((time.perf_counter() - start) * 1000))
+        return result
+
+    async def on_get_prompt(self, context, call_next):
+        name = getattr(context.message, "name", "?")
+        arguments = getattr(context.message, "arguments", None) or {}
+        record_event(_session_id(context), "prompt", name,
+                     detail=", ".join(sorted(arguments)) if arguments else "",
+                     tier=2)
         return await call_next(context)
 
     async def on_message(self, context, call_next):
@@ -60,247 +164,46 @@ mcp.add_middleware(ConnectionTracker())
 
 @mcp.custom_route("/status", methods=["GET"])
 async def status_route(request: Request) -> JSONResponse:
-    config = _load_gcontext_yaml()
-    flow_summary = {}
-    for fname, flow in flows_mod.load_flows(PROJECT_DIR).items():
-        board = flows_mod.flow_board(PROJECT_DIR, flow)
-        flow_summary[fname] = {
-            "done": sum(1 for s in board if s["status"] == "done"),
-            "total": len(board),
-            "actionable": [s["id"] for s in flows_mod.actionable(board)],
-        }
+    config = state.load_gcontext_yaml(PROJECT_DIR)
     return JSONResponse({
         "name": config.get("name", PROJECT_DIR.name),
         "project_dir": str(PROJECT_DIR.resolve()),
         "sessions": list(SESSIONS.values()),
-        "flows": flow_summary,
     })
 
 
-def _load_gcontext_yaml() -> dict:
-    p = PROJECT_DIR / "gcontext.yaml"
-    if p.exists():
-        return yaml.safe_load(p.read_text()) or {}
-    return {}
+def register_commands() -> int:
+    """Register command files as MCP prompts. Call once, after PROJECT_DIR is set."""
+    return commands_mod.register_commands(mcp, PROJECT_DIR)
 
 
-def _load_connections() -> dict[str, ConnectionManifest]:
-    """Scan connections/ for subdirectories containing connection.yaml."""
-    conns_dir = PROJECT_DIR / "connections"
-    if not conns_dir.is_dir():
-        return {}
-    result = {}
-    for item in sorted(conns_dir.iterdir()):
-        if not item.is_dir():
-            continue
-        conn_file = item / "connection.yaml"
-        if not conn_file.exists():
-            continue
-        data = yaml.safe_load(conn_file.read_text()) or {}
-        manifest = ConnectionManifest(**data)
-        result[manifest.name] = manifest
-    return result
+def load_instructions() -> int:
+    """Serve the project's instructions.md in the MCP handshake.
 
-
-def _connection_files(name: str) -> list[str]:
-    """List non-yaml files in a connection folder."""
-    conn_dir = PROJECT_DIR / "connections" / name
-    if not conn_dir.is_dir():
-        return []
-    files = []
-    for f in sorted(conn_dir.rglob("*")):
-        if f.is_file() and f.name != "connection.yaml":
-            files.append(str(f.relative_to(PROJECT_DIR)))
-    return files
-
-
-def _load_secrets_env() -> dict[str, str]:
-    env_file = PROJECT_DIR / "secrets.env"
-    if not env_file.exists():
-        return {}
-    pairs = {}
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" in line:
-            key, _, value = line.partition("=")
-            pairs[key.strip()] = value.strip()
-    return pairs
-
-
-def _archived() -> dict[str, list[str]]:
-    """Names of archived items per category, from archive/{connections,modules,flows}/.
-
-    Anything under archive/ is never scanned into overview, the ledger counts,
-    or the flow boards. It stays readable by path via read_context. Archiving
-    is a plain folder move; there is no metadata and no automatic behavior.
-    """
-    result = {}
-    for category in ("connections", "modules", "flows"):
-        d = PROJECT_DIR / "archive" / category
-        if d.is_dir():
-            items = [i.name for i in sorted(d.iterdir()) if i.is_dir()]
-            if items:
-                result[category] = items
-    return result
-
-
-def _archived_line() -> str:
-    archived = _archived()
-    if not archived:
-        return ""
-    parts = [f"{len(items)} {cat}" for cat, items in archived.items()]
-    return f"archive/: {', '.join(parts)} (not scanned, readable by path)"
-
-
-def _discover_modules() -> dict[str, ModuleManifest]:
-    """Scan modules/ for folders with module.yaml."""
-    modules_dir = PROJECT_DIR / "modules"
-    if not modules_dir.is_dir():
-        return {}
-    result = {}
-    for item in sorted(modules_dir.iterdir()):
-        if not item.is_dir():
-            continue
-        manifest_file = item / "module.yaml"
-        if manifest_file.exists():
-            data = yaml.safe_load(manifest_file.read_text()) or {}
-            manifest = ModuleManifest(**data)
-        else:
-            manifest = ModuleManifest(name=item.name, description="")
-        result[manifest.name] = manifest
-    return result
-
-
-def _module_files(name: str) -> list[str]:
-    """List content files in a module folder."""
-    mod_dir = PROJECT_DIR / "modules" / name
-    if not mod_dir.is_dir():
-        return []
-    files = []
-    for f in sorted(mod_dir.rglob("*")):
-        if f.is_file() and f.name not in ("module.yaml", ".gitkeep"):
-            files.append(str(f.relative_to(PROJECT_DIR)))
-    return files
-
-
-SCRIPT_TIMEOUT = 60
-
-
-def _scrub_output(text: str, secrets: dict[str, str]) -> str:
-    for value in secrets.values():
-        if value and len(value) > 3:
-            text = text.replace(value, "***")
-    return text
-
-
-def _venv_dir() -> Path:
-    return PROJECT_DIR.resolve() / ".venv"
-
-
-def _venv_python() -> Path:
-    venv = _venv_dir()
-    if sys.platform == "win32":
-        return venv / "Scripts" / "python.exe"
-    return venv / "bin" / "python"
-
-
-def _collect_deps() -> set[str]:
-    connections = _load_connections()
-    all_deps = set()
-    for conn in connections.values():
-        for dep in conn.deps:
-            all_deps.add(dep)
-    return all_deps
-
-
-def ensure_venv() -> None:
-    """Create the project venv if missing and sync connection deps into it."""
-    venv_dir = _venv_dir()
-
-    if not venv_dir.is_dir():
-        subprocess.run(
-            ["uv", "venv", str(venv_dir), "--quiet"],
-            check=True,
-            cwd=str(PROJECT_DIR),
-        )
-
-    all_deps = _collect_deps()
-    if all_deps:
-        subprocess.run(
-            ["uv", "pip", "install", "--quiet", "--python", str(_venv_python())]
-            + sorted(all_deps),
-            check=True,
-            cwd=str(PROJECT_DIR),
-        )
-
-
-def build_ledger(mode: str) -> list[dict]:
-    """Every pipe that inserts context into the agent for a mode ('chat' or 'mcp').
-
-    Statuses: loaded (pushed at start), on demand (agent pulls, visible as a
-    tool call), skipped (closed by a launch flag), uncontrolled (runtime-owned).
+    This is THE file pushed to every agent at connect: what it says is exactly
+    what the agent starts with, the ledger declares it as G0, and editing the
+    file (plus a restart) changes what every future session receives. Returns
+    the line count, 0 if the file does not exist (nothing is pushed then).
     """
     instructions = PROJECT_DIR / "instructions.md"
-    connections = _load_connections()
-    modules = _discover_modules()
-    n_files = sum(len(_connection_files(c)) for c in connections)
-    n_files += sum(len(_module_files(m)) for m in modules)
-
-    ledger = []
-
-    if mode == "chat":
-        if instructions.exists():
-            n = len(instructions.read_text().splitlines())
-            ledger.append({"id": "G0", "label": "instructions.md", "detail": f"system prompt ({n} lines)", "status": "loaded"})
-        else:
-            ledger.append({"id": "G0", "label": "instructions.md", "detail": "file missing, no system prompt", "status": "skipped"})
-    else:
-        ledger.append({"id": "G0", "label": "instructions.md", "detail": "not auto-loaded in MCP mode, read it via read_context", "status": "on demand"})
-
-    ledger.append({"id": "G1", "label": "tool descriptions", "detail": "6 gcontext tools, pushed at connect", "status": "loaded"})
-    ledger.append({"id": "G2", "label": "overview()", "detail": "project map, secret status", "status": "on demand"})
-    g3_detail = f"{n_files} files in connections/ + modules/"
-    if _archived():
-        g3_detail += "; archive/ not scanned, readable by path"
-    ledger.append({"id": "G3", "label": "read_context()", "detail": g3_detail, "status": "on demand"})
-    ledger.append({"id": "G4", "label": "list_connections()", "detail": f"{len(connections)} connection(s)", "status": "on demand"})
-    ledger.append({"id": "G5", "label": "run_script() output", "detail": "secret values scrubbed", "status": "on demand"})
-    all_flows = flows_mod.load_flows(PROJECT_DIR)
-    ledger.append({"id": "G6", "label": "flows()", "detail": f"{len(all_flows)} flow(s); step instructions surface only when the step is actionable", "status": "on demand"})
-
-    if mode == "chat":
-        ledger.append({"id": "R1", "label": "claude default system prompt", "detail": "replaced by --system-prompt", "status": "skipped"})
-        ledger.append({"id": "R2", "label": "~/.claude/CLAUDE.md + settings", "detail": "closed via --setting-sources ''", "status": "skipped"})
-        ledger.append({"id": "R3", "label": "other MCP servers", "detail": "closed via --strict-mcp-config", "status": "skipped"})
-        ledger.append({"id": "R4", "label": "claude tool harness", "detail": "runtime-owned", "status": "uncontrolled"})
-    else:
-        ledger.append({"id": "R1", "label": "runtime system prompt", "detail": "runtime-owned", "status": "uncontrolled"})
-        ledger.append({"id": "R2", "label": "user/project CLAUDE.md", "detail": "runtime-owned", "status": "uncontrolled"})
-        ledger.append({"id": "R3", "label": "other MCP servers, skills, memory", "detail": "runtime-owned", "status": "uncontrolled"})
-
-    return ledger
+    if not instructions.exists():
+        mcp.instructions = None
+        return 0
+    text = instructions.read_text()
+    mcp.instructions = text
+    return len(text.splitlines())
 
 
-def render_ledger_plain(mode: str) -> list[str]:
-    lines = []
-    for i, pipe in enumerate(build_ledger(mode), 1):
-        label = f"{pipe['label']} ".ljust(36, ".")
-        lines.append(f"{i}. [{pipe['id']}] {label} {pipe['status']}: {pipe['detail']}")
-    return lines
-
-
-@mcp.tool
+@mcp.tool(description=_tool_doc("overview"))
 def overview() -> str:
-    """Show project info, all connections with their secret status, and all modules with descriptions."""
-    config = _load_gcontext_yaml()
-    connections = _load_connections()
-    secrets = _load_secrets_env()
-    modules = _discover_modules()
+    root = PROJECT_DIR
+    config = state.load_gcontext_yaml(root)
+    connections = state.load_connections(root)
+    secrets = secrets_mod.load(root)
+    modules = state.discover_modules(root)
 
     lines = []
-    name = config.get("name", PROJECT_DIR.name)
+    name = config.get("name", root.name)
     desc = config.get("description", "")
     lines.append(f"# {name}")
     if desc:
@@ -309,10 +212,10 @@ def overview() -> str:
 
     lines.append("## Context ledger")
     lines.append("Everything that enters your context from this server, and how:")
-    lines.extend(render_ledger_plain("mcp"))
+    lines.extend(ledger_mod.render_plain(root))
     lines.append("")
 
-    instructions = PROJECT_DIR / "instructions.md"
+    instructions = root / "instructions.md"
     if instructions.exists():
         lines.append(f"System prompt: instructions.md ({len(instructions.read_text().splitlines())} lines)")
         lines.append("")
@@ -324,15 +227,15 @@ def overview() -> str:
         filled = sum(1 for s in conn.secrets if s in secrets and secrets[s])
         total = len(conn.secrets)
         status = "ready" if filled == total else f"missing {total - filled} secret(s)"
-        missing = [s for s in conn.secrets if s not in secrets or not secrets[s]]
         lines.append(f"- **{cname}**: {status}")
         if conn.description:
             lines.append(f"  {conn.description}")
-        if missing:
-            lines.append(f"  Missing: {', '.join(missing)}")
+        for s in conn.secrets:
+            has_value = s in secrets and bool(secrets[s])
+            lines.append(f"  - {s}: {'filled' if has_value else 'MISSING'}")
         if conn.deps:
             lines.append(f"  Deps: {', '.join(conn.deps)}")
-        for f in _connection_files(cname):
+        for f in state.connection_files(root, cname):
             lines.append(f"  - {f}")
     lines.append("")
 
@@ -343,25 +246,11 @@ def overview() -> str:
             lines.append(f"- **{mname}** (v{mod.version}){tag_str}")
             if mod.description:
                 lines.append(f"  {mod.description}")
-            for f in _module_files(mname):
+            for f in state.module_files(root, mname):
                 lines.append(f"  - {f}")
         lines.append("")
 
-    all_flows = flows_mod.load_flows(PROJECT_DIR)
-    if all_flows:
-        lines.append("## Flows")
-        for fname, flow in all_flows.items():
-            board = flows_mod.flow_board(PROJECT_DIR, flow)
-            done = sum(1 for s in board if s["status"] == "done")
-            ready = [s["id"] for s in flows_mod.actionable(board)]
-            ready_str = f", actionable: {', '.join(ready)}" if ready else ""
-            lines.append(f"- **{fname}**: {done}/{len(board)} done{ready_str}")
-            if flow.description:
-                lines.append(f"  {flow.description}")
-        lines.append("Call flows() for step details and instructions.")
-        lines.append("")
-
-    archived = _archived()
+    archived = state.archived(root)
     if archived:
         lines.append("## Archive")
         for cat, items in archived.items():
@@ -371,155 +260,36 @@ def overview() -> str:
     return "\n".join(lines).rstrip()
 
 
-@mcp.tool
-def read_context(path: str) -> str:
-    """Read a file from the project. Use overview() first to see available files."""
-    target = (PROJECT_DIR / path).resolve()
-    if not target.is_relative_to(PROJECT_DIR.resolve()):
-        return f"Error: path {path} is outside the project directory."
-    if not target.exists():
-        return f"Error: {path} does not exist."
-    if not target.is_file():
-        return f"Error: {path} is not a file."
-    return target.read_text()
+@mcp.tool(description=_tool_doc("read_file"))
+def read_file(path: str) -> str:
+    return fs.read_file(PROJECT_DIR, path)
 
 
-@mcp.tool
-def write_context(path: str, content: str) -> str:
-    """Write or update a file in the project. Creates parent directories if needed.
-
-    Use this to update connection context docs, create playbooks, write logs, etc.
-    Cannot write to secrets.env or connection.yaml files.
-
-    Args:
-        path: Relative path within the project (e.g. 'modules/support-workflow/playbooks/refund.md')
-        content: The full file content to write.
-    """
-    target = (PROJECT_DIR / path).resolve()
-    if not target.is_relative_to(PROJECT_DIR.resolve()):
-        return f"Error: path {path} is outside the project directory."
-    if target.name == "secrets.env":
-        return "Error: cannot write to secrets.env through the agent."
-    if target.name == "connection.yaml":
-        return "Error: cannot write to connection.yaml through the agent."
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content)
-    return f"Written: {path} ({len(content)} bytes)"
+@mcp.tool(description=_tool_doc("write_file"))
+def write_file(path: str, content: str) -> str:
+    return fs.write_file(PROJECT_DIR, path, content)
 
 
-@mcp.tool
-def run_script(code: str) -> str:
-    """Run a Python script in the project's .venv with secrets as env vars.
-
-    The .venv has all connection deps pre-installed.
-    Access secrets with os.environ["SECRET_NAME"].
-    Secret values are scrubbed from stdout/stderr before returning.
-
-    Args:
-        code: Python source code to execute.
-    """
-    secrets = _load_secrets_env()
-    python = _venv_python()
-
-    if not python.exists():
-        ensure_venv()
-
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".py", delete=False, dir=PROJECT_DIR
-    ) as f:
-        f.write(code)
-        script_path = f.name
-
-    try:
-        env = os.environ.copy()
-        env.update(secrets)
-
-        result = subprocess.run(
-            [str(python), script_path],
-            capture_output=True,
-            text=True,
-            timeout=SCRIPT_TIMEOUT,
-            env=env,
-            cwd=str(PROJECT_DIR),
-        )
-
-        output_parts = []
-        if result.stdout.strip():
-            output_parts.append(result.stdout.strip())
-        if result.stderr.strip():
-            output_parts.append(f"[stderr]\n{result.stderr.strip()}")
-        if result.returncode != 0:
-            output_parts.append(f"[exit code: {result.returncode}]")
-
-        output = "\n".join(output_parts) if output_parts else "(no output)"
-        return _scrub_output(output, secrets)
-
-    except subprocess.TimeoutExpired:
-        return f"Error: script timed out after {SCRIPT_TIMEOUT} seconds."
-    finally:
-        Path(script_path).unlink(missing_ok=True)
+@mcp.tool(description=_tool_doc("list_dir"))
+def list_dir(path: str = ".") -> str:
+    return fs.list_dir(PROJECT_DIR, path)
 
 
-@mcp.tool
-def flows(name: str = "") -> str:
-    """Show flows: declarative multi-step work whose state lives in files.
-
-    Each step declares which files it needs and which it produces. Status is
-    computed purely from the filesystem: blocked (a needed file is missing),
-    ready (needs exist, produces missing), stale (a need changed after the
-    produces were written), done. Instructions are shown only for actionable
-    (ready or stale) steps.
-
-    You complete a step by writing its declared produces with write_context.
-    Nothing else tracks progress; the files are the state.
-
-    Args:
-        name: Optional flow name to show just one flow.
-    """
-    all_flows = flows_mod.load_flows(PROJECT_DIR)
-    if not all_flows:
-        return "No flows defined in flows/*/flow.yaml"
-
-    if name:
-        if name not in all_flows:
-            return f"Error: no flow named {name}. Available: {', '.join(all_flows)}"
-        all_flows = {name: all_flows[name]}
-
-    lines = []
-    for flow in all_flows.values():
-        lines.extend(flows_mod.render_flow(PROJECT_DIR, flow))
-        lines.append("")
-    return "\n".join(lines).rstrip()
+@mcp.tool(description=_tool_doc("grep"))
+def grep(pattern: str, path: str = ".", glob: str = "") -> str:
+    return fs.grep(PROJECT_DIR, pattern, path=path, glob=glob)
 
 
-@mcp.tool
-def list_connections() -> str:
-    """Show all connections with their secrets, deps, context files, and whether each secret has a value."""
-    connections = _load_connections()
-    secrets = _load_secrets_env()
+@mcp.tool(description=_tool_doc("run_script"))
+def run_script(
+    code: str = "",
+    path: str = "",
+    args: list[str] | None = None,
+    params: dict[str, str] | None = None,
+) -> str:
+    return exec_mod.run(PROJECT_DIR, code=code, path=path, args=args, params=params)
 
-    if not connections:
-        return "No connections defined in connections/*/connection.yaml"
 
-    lines = []
-    for cname, conn in connections.items():
-        lines.append(f"## {cname}")
-        if conn.description:
-            lines.append(conn.description)
-        lines.append("")
-        lines.append("Secrets:")
-        for s in conn.secrets:
-            has_value = s in secrets and bool(secrets[s])
-            icon = "filled" if has_value else "MISSING"
-            lines.append(f"  - {s}: {icon}")
-        if conn.deps:
-            lines.append(f"Deps: {', '.join(conn.deps)}")
-        context_files = _connection_files(cname)
-        if context_files:
-            lines.append("Context:")
-            for f in context_files:
-                lines.append(f"  - {f}")
-        lines.append("")
 
-    return "\n".join(lines)
+
+from . import dashboard  # noqa: E402,F401  registers /api/* and the static catch-all

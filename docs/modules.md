@@ -44,7 +44,7 @@ modules/company/
   infrastructure.md   # how things are deployed
 ```
 
-There is no enforced schema beyond `index.md`. Different modules have different structures depending on what they do.
+There is no enforced schema beyond `index.md`. Different modules have different structures depending on what they do. When `index.md` gets long, split it into more files and link them from `index.md`.
 
 ## How someone uses a module
 

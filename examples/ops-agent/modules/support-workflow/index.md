@@ -6,3 +6,4 @@ Read [steps.md](steps.md) for the process. Playbooks are built over time as issu
 - steps.md: the 5-phase workflow
 - playbooks/: reusable procedures, accumulated per company
 - logs/: resolution records
+- commands/: slash-command entry points (refund-reply)

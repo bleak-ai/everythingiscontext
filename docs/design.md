@@ -8,7 +8,7 @@ Claude Code, Codex, Cursor: these are runtimes. They run the loop, stream tokens
 
 gcontext never competes with runtimes, it feeds them. Anything that looks like a message loop, a streaming handler, or a session manager belongs to the runtime. Runtimes are a competitive, fast-moving space owned by large companies; state is not. Runtimes are interchangeable; the state is not.
 
-An earlier version shipped a ~230 line custom chat REPL wrapping `claude -p`. It was deleted: it reimplemented what the runtime ships for free, and a homemade REPL is a runtime. Its replacement, `gcontext chat`, is a small launcher that prints the context ledger and execs the real `claude` with the right flags. The launcher gives more control over context than the REPL ever did, because the runtime's own flags can close pipes the REPL couldn't.
+This principle removed two features in sequence. An early version shipped a ~230 line custom chat REPL wrapping `claude -p`; deleted, because a homemade REPL is a runtime. Its replacement, `gcontext chat`, was a launcher that execed the real `claude` with lockdown flags; also deleted, once the handshake started delivering `instructions.md` to every client and the launcher's only remaining job was passing claude-specific flags gcontext has no business owning. What survives is a documented claude invocation in the README ("Controlled session") for anyone who wants those pipes closed. Each step moved the same direction: gcontext feeds runtimes and launches none.
 
 ## A folder is the agent's state
 
@@ -20,7 +20,7 @@ The predecessor of this design had typed modules (integration / task / workflow)
 
 Each concern has exactly one representation:
 
-- **YAML** (`gcontext.yaml`, `connection.yaml`, `flow.yaml`) is data the framework reads. It is statically parseable: gcontext can list every connection, every required secret, and every flow step without executing anything, without deps installed, without secrets set.
+- **YAML** (`gcontext.yaml`, `connection.yaml`) is data the framework reads. It is statically parseable: gcontext can list every connection and every required secret without executing anything, without deps installed, without secrets set.
 - **Markdown** is context the agent reads. Free-form, no schema, grows however makes sense.
 - **Python** exists only as scripts the agent writes and runs on demand.
 
@@ -36,7 +36,7 @@ This is the core difference from tool-centric frameworks: there, a developer pre
 
 Secret NAMES are declared in `connection.yaml`. Secret VALUES live in `secrets.env`, gitignored, never leaving the machine.
 
-The agent knows `STRIPE_API_KEY` exists and writes `os.environ["STRIPE_API_KEY"]` in scripts, but can never read the value: values are injected as environment variables at execution time and scrubbed from the script's output before the agent sees it. The `write_context` tool refuses to touch `secrets.env`.
+The agent knows `STRIPE_API_KEY` exists and writes `os.environ["STRIPE_API_KEY"]` in scripts, but can never read the value: values are injected as environment variables at execution time and scrubbed from the script's output before the agent sees it. The `write_file` tool refuses to touch `secrets.env`.
 
 This is the invariant that never changes: secrets never enter the context window. Names are visible, values are local, injected at runtime, scrubbed from output.
 
@@ -52,45 +52,35 @@ Rejected along the way: per-harness adapters that write each client's config (sc
 
 The accepted tradeoff: something must be running.
 
-## The context ledger: nothing is pushed invisibly
+## The context ledger: everything pushed is declared
 
-Every pipe that inserts context into the agent is enumerated in one ledger, computed live from the folder so it cannot go stale. Each pipe is marked `loaded` (pushed at start), `on demand` (agent pulls it via a visible tool call), `skipped` (closed by a launch flag), or `uncontrolled` (runtime-owned, outside gcontext's view). The ledger appears in `gcontext context`, at `chat` launch, in `overview()`, and after `connect`.
+Every pipe that inserts context into the agent is enumerated in one ledger, computed live from the folder so it cannot go stale. Each pipe is marked `loaded` (pushed at connect), `on demand` (agent pulls it via a visible tool call), `skipped` (nothing to push), or `uncontrolled` (runtime-owned, outside gcontext's view). The ledger appears in `gcontext context`, in `overview()`, after `connect`, and in the dashboard.
 
-This section exists because of a reverted feature. instructions.md was once wired into the MCP handshake's `instructions` field, so any connecting client received it automatically. It worked, and it was reverted the same day. gcontext's entire promise is legibility of context: you look at the folder and you know what the agent knows. Content that teleports into the agent's head through a handshake side channel is invisible; a user debugging their agent cannot tell where an instruction came from or that it was loaded at all.
+The one thing gcontext pushes at connect is `instructions.md`, through the MCP handshake's `instructions` field, declared as ledger pipe G0. This is the design's answer to "what does the agent receive when it attaches": one file, in the folder, versioned with git, and nothing else. Edit it and you have edited what every future session starts with.
 
-The invariant: a context management system must make context flow explicit and inspectable. Convenience never justifies a hidden push. Consequence: in attach mode, instructions.md is not auto-loaded; the ledger and `overview()` tell the agent to read it.
+This position was reached in two steps. The handshake push was first rejected outright, on the argument that content arriving through a side channel is invisible in the conversation. Living with the alternative showed the real cost: the agent started blind, had to be told (via `overview()`) to read its own instructions, and a runtime that never asked never saw them. The rejection was aimed at the wrong target. The problem was never pushing at connect; it was pushing without declaring. So the invariant is: everything pushed is declared in the ledger, and everything declared is a file you control.
 
 The ledger is also honest about its limits. When a runtime keeps pipes gcontext cannot close (its own system prompt, its config files, other MCP servers), the ledger marks them UNCONTROLLED instead of pretending the session is cleaner than it is.
-
-## Flows: reactive state, not reactive execution
-
-The tempting design was a workflow engine inside gcontext: watch state, fire LLM calls, run steps. That would make gcontext a runtime and an orchestrator, competing with graph frameworks and the harnesses themselves. Rejected.
-
-Instead, flows are data. A step declares `needs` and `produces` (file paths), and status is a pure function of the filesystem, computed on read with make-style mtime staleness: `blocked`, `ready`, `stale`, `done`. No run state is stored anywhere.
-
-Everything else falls out for free:
-
-- Completing a step IS writing its declared files. There is no `complete_step` call, so there is no stored state to drift from reality.
-- Reactivity with zero machinery: change an upstream file and downstream steps become stale on the next read.
-- Progress is git-diffable and revertible, because progress is files.
-- Any runtime, several at once, a script, or a human with a text editor can advance the same flow.
-
-A graph engine keeps state in a checkpointer and drives execution; gcontext keeps state in files and drives nothing.
-
-The `flows()` tool shows every step's status but includes instructions only for actionable (ready or stale) steps: the runtime receives exactly the work the current state unlocks. This stays inside the legibility invariant because it is a pull, and the deferral rule is itself declared in the ledger.
 
 ## Archive: a location, not metadata
 
 State accumulates until it pollutes the context and the agent can't find the right thing. The rejected fix was a `surface: active | background | archived` field with agent-driven housekeeping and staleness hints: too much magic. gcontext must have no background or automatic behaviors; humans must always see how state is controlled.
 
-So visibility is a function of file location, the same way flow status is a function of file existence. Move a folder into `archive/` and it stops being scanned, while staying readable by path, and every summary mentions what's archived so nothing disappears silently. A folder move is an action everyone understands, is visible in git, and cannot happen behind anyone's back. gcontext never moves, archives, or deletes anything on its own.
+So visibility is a function of file location. Move a folder into `archive/` and it stops being scanned, while staying readable by path, and every summary mentions what's archived so nothing disappears silently. A folder move is an action everyone understands, is visible in git, and cannot happen behind anyone's back. gcontext never moves, archives, or deletes anything on its own.
+
+## Scripts and commands: knowledge that graduated
+
+Two features share one idea: when the agent produces something that works, keep it as a file next to the knowledge it belongs to, and reuse it instead of regenerating it.
+
+A **saved script** is a proven procedure under a `scripts/` folder, run by path through `run_script` (with `args` and named `params` that arrive as `PARAM_<NAME>` env vars). Writing it is an ordinary `write_file` call, visible like every other state change.
+
+A **command** is a user-invokable entry point under a `commands/` folder, registered as an MCP prompt named `<owner>__<command>` and surfaced by Claude Code as a slash command. Commands are prompts, not tools, on purpose: a tool's schema is pushed into context at connect time for every session, while a prompt is only listed, and its text enters the conversation exactly when the user invokes it. That keeps the tool list at five and honors the no-invisible-push rule: the injection is user-triggered and the ledger lists commands as their own pipe.
 
 ## Deferred, deliberately
 
 - **Remote variant**: same model, URL plus token, for a served-anywhere agent. The URL transport is the bridge to it.
 - **Triggers/watchers**: something that pokes a runtime when state changes. Even then, gcontext would trigger a runtime, never run the loop.
-- **Multi-instance flow runs** (the same flow over many tickets): needs a parametrization story, waiting for a real need.
-- **Non-file flow conditions** (a step gated on a secret being filled): plausible, waiting for a real need.
+- **Flows**: an earlier release shipped declarative multi-step work (steps declaring `needs`/`produces` files, status computed from the filesystem). It was removed because no real process ever needed it: a module with a steps file, entered through a command, covered every case that came up. The idea returns only if a real recurring process appears that modules plus commands cannot express, and it will be designed against that process.
 
 ## Principles
 
@@ -100,6 +90,6 @@ So visibility is a function of file location, the same way flow status is a func
 4. **Static metadata, dynamic execution.** Everything is inspectable without running anything; scripts run only when explicitly invoked.
 5. **The agent is already smart, it just needs the right information.** Good context plus usable credentials beats pre-built tools.
 6. **Secrets never enter the context window.**
-7. **Nothing is pushed invisibly.** Every piece of context is a file in the folder, a visible tool result, or explicitly listed as runtime-owned.
+7. **Everything pushed is declared.** Every piece of context is a file in the folder reaching the agent through a ledger-declared pipe, a visible tool result, or explicitly listed as runtime-owned.
 8. **Status is a pure function of the filesystem.** Flow progress, archive visibility, connection readiness: all derived from files on read, never stored and synced.
 9. **Honesty over the illusion of control.** Uncontrolled pipes are labeled uncontrolled.

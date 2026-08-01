@@ -3,16 +3,16 @@
 import argparse
 import json
 import socket
-import subprocess
 import sys
-import tempfile
-import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import flows as flows_mod
+from . import exec as exec_mod
+from . import ledger as ledger_mod
+from . import secrets as secrets_mod
 from . import server
+from . import state
 
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -30,8 +30,8 @@ STATUS_COLOR = {
 }
 
 
-def print_ledger(mode: str):
-    for i, pipe in enumerate(server.build_ledger(mode), 1):
+def print_ledger(project_dir: Path):
+    for i, pipe in enumerate(ledger_mod.build(project_dir), 1):
         color = STATUS_COLOR.get(pipe["status"], "")
         label = f"{pipe['label']} ".ljust(36, ".")
         status = pipe["status"].upper() if pipe["status"] == "uncontrolled" else pipe["status"]
@@ -48,12 +48,14 @@ INIT_INSTRUCTIONS = """\
 # Instructions
 
 You are the agent for this gcontext project. Your state lives in this folder:
-read it with read_context, keep it current with write_context.
+read it with read_file, keep it current with write_file, find things with
+list_dir and grep.
 
-- Call overview() first to see connections, modules, flows, and the context ledger.
-- Call flows() to see multi-step work and what is actionable right now.
+- Call overview() first to see connections, modules, and the context ledger.
 - Use run_script for anything that needs an API: secrets are injected as env
   vars (you only ever see their names), deps are preinstalled.
+- When a script proves itself, save it with write_file under a scripts/
+  folder and run it by path from then on, instead of rewriting it.
 - Record what you learn: update the relevant index.md or module so the next
   session starts smarter than this one.
 """
@@ -69,40 +71,6 @@ secrets.env
 .venv/
 """
 
-INIT_FLOW_YAML = """\
-name: demo-brief
-description: Demo flow. Capture a brief, draft from it, then finalize.
-steps:
-  - id: capture
-    description: Capture what the user wants covered
-    produces:
-      - flows/demo-brief/brief.md
-    instructions: |
-      Ask the user what they want a short write-up about and save the answers
-      to flows/demo-brief/brief.md as a short markdown brief.
-
-  - id: draft
-    description: Draft the write-up from the brief
-    needs:
-      - flows/demo-brief/brief.md
-    produces:
-      - flows/demo-brief/draft.md
-    instructions: |
-      Read the brief and write a first draft to flows/demo-brief/draft.md.
-
-  - id: finalize
-    description: Polish the draft into the final version
-    needs:
-      - flows/demo-brief/brief.md
-      - flows/demo-brief/draft.md
-    produces:
-      - flows/demo-brief/final.md
-    instructions: |
-      Tighten the draft into flows/demo-brief/final.md. If the brief changed
-      since the draft, this step shows as stale: redo it from the current brief.
-"""
-
-
 def cmd_init(args):
     target = Path(args.directory).resolve()
     if target.exists() and any(target.iterdir()):
@@ -116,7 +84,6 @@ def cmd_init(args):
         "secrets.env": INIT_SECRETS,
         ".gitignore": INIT_AGENT_GITIGNORE,
         "connections/.gitkeep": "",
-        "flows/demo-brief/flow.yaml": INIT_FLOW_YAML,
         "modules/.gitkeep": "",
         "archive/.gitkeep": "",
     }
@@ -132,7 +99,6 @@ def cmd_init(args):
     print("Next steps:")
     print(f"  1. gcontext up {args.directory}          start the server")
     print(f"  2. gcontext connect claude        attach a harness (or: desktop, codex, cursor)")
-    print(f"  3. gcontext chat {args.directory}        or talk to a dedicated, fully controlled session")
     print()
     print("Give the agent its first connection (any service with an API):")
     print(f"  {args.directory}/connections/<service>/connection.yaml   secret NAMEs + Python deps")
@@ -151,10 +117,10 @@ def find_project_dir(path: str | None) -> Path:
     sys.exit(1)
 
 
-def resolve_port(args) -> int:
+def resolve_port(args, project_dir: Path) -> int:
     if getattr(args, "port", None):
         return args.port
-    config = server._load_gcontext_yaml()
+    config = state.load_gcontext_yaml(project_dir)
     return int(config.get("port", DEFAULT_PORT))
 
 
@@ -209,10 +175,10 @@ def fetch_status(port: int) -> dict | None:
 def cmd_up(args):
     project_dir = find_project_dir(args.project)
     server.PROJECT_DIR = project_dir
-    config = server._load_gcontext_yaml()
+    config = state.load_gcontext_yaml(project_dir)
     name = config.get("name", project_dir.name)
     configured = config.get("port")
-    port = resolve_port(args)
+    port = resolve_port(args, project_dir)
 
     if not port_is_free(port):
         running = fetch_status(port)
@@ -233,12 +199,15 @@ def cmd_up(args):
 
     url = server_url(port)
 
-    server.ensure_venv()
+    exec_mod.ensure_venv(project_dir)
+    n_commands = server.register_commands()
+    n_instruction_lines = server.load_instructions()
 
     print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {name}")
     print(f"{DIM}State: {project_dir}{RESET}")
     print()
     print(f"Serving at {BOLD}{url}{RESET}")
+    print(f"Dashboard:  http://127.0.0.1:{port}/")
     print()
     print("Connect a harness (once per harness, works from any directory):")
     print(f"  Claude Code:     claude mcp add --transport http {name} {url}")
@@ -247,25 +216,31 @@ def cmd_up(args):
     print(f'  Codex:           [mcp_servers.{name}] url = "{url}" in ~/.codex/config.toml')
     print("  Details:         gcontext connect")
     print()
+    if n_instruction_lines:
+        print(f"Instructions: instructions.md ({n_instruction_lines} lines) is pushed to every agent at connect.")
+    else:
+        print(f"{YELLOW}Instructions: no instructions.md, agents receive nothing at connect.{RESET}")
+    if n_commands:
+        print(f"Commands: {n_commands} registered as MCP prompts (slash commands in Claude Code).")
+    print()
     print("Connections appear below as harnesses attach. Ctrl+C stops the server,")
     print("and every harness cleanly loses access.")
     print()
 
     server.mcp.run(
         transport="http", host="127.0.0.1", port=port, path="/mcp",
-        show_banner=False, log_level="warning",
+        show_banner=False, log_level="warning", stateless_http=True,
     )
 
 
 def cmd_status(args):
     project_dir = find_project_dir(args.project)
-    server.PROJECT_DIR = project_dir
 
-    config = server._load_gcontext_yaml()
-    connections = server._load_connections()
-    secrets = server._load_secrets_env()
-    modules = server._discover_modules()
-    port = resolve_port(args)
+    config = state.load_gcontext_yaml(project_dir)
+    connections = state.load_connections(project_dir)
+    secrets = secrets_mod.load(project_dir)
+    modules = state.discover_modules(project_dir)
+    port = resolve_port(args, project_dir)
 
     name = config.get("name", project_dir.name)
     desc = config.get("description", "")
@@ -315,21 +290,7 @@ def cmd_status(args):
             print(f"  {mname}{suffix}")
         print()
 
-    all_flows = flows_mod.load_flows(project_dir)
-    if all_flows:
-        print("Flows:")
-        for fname, flow in all_flows.items():
-            board = flows_mod.flow_board(project_dir, flow)
-            done = sum(1 for s in board if s["status"] == "done")
-            ready = [s["id"] for s in flows_mod.actionable(board)]
-            if ready:
-                print(f"  {fname}: {done}/{len(board)} done, {GREEN}actionable: {', '.join(ready)}{RESET}")
-            else:
-                print(f"  {fname}: {done}/{len(board)} done")
-        print(f"  {DIM}details: gcontext flows{RESET}")
-        print()
-
-    archived_line = server._archived_line()
+    archived_line = state.archived_line(project_dir)
     if archived_line:
         print(f"{DIM}{archived_line}{RESET}")
         print()
@@ -339,10 +300,9 @@ def cmd_status(args):
 
 def cmd_connect(args):
     project_dir = find_project_dir(args.project)
-    server.PROJECT_DIR = project_dir
-    config = server._load_gcontext_yaml()
+    config = state.load_gcontext_yaml(project_dir)
     name = config.get("name", project_dir.name)
-    port = resolve_port(args)
+    port = resolve_port(args, project_dir)
     url = server_url(port)
 
     live = fetch_status(port)
@@ -393,154 +353,20 @@ def cmd_connect(args):
 
     print()
     print("Context this client will receive:")
-    print_ledger("mcp")
+    print_ledger(project_dir)
     print()
     print(f"{DIM}Verify anytime with: gcontext status{RESET}")
 
 
 def cmd_context(args):
     project_dir = find_project_dir(args.project)
-    server.PROJECT_DIR = project_dir
-    config = server._load_gcontext_yaml()
+    config = state.load_gcontext_yaml(project_dir)
     name = config.get("name", project_dir.name)
 
     print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {name}")
-    print(f"{DIM}Every pipe that inserts context into the agent, per mode.{RESET}")
+    print(f"{DIM}Every pipe that inserts context into an attached agent.{RESET}")
     print()
-    print(f"{BOLD}gcontext chat{RESET} {DIM}(dedicated claude, fully controlled){RESET}")
-    print_ledger("chat")
-    print()
-    print(f"{BOLD}MCP attach{RESET} {DIM}(any harness pointed at the URL, shared agent){RESET}")
-    print_ledger("mcp")
-
-
-FLOW_STATUS_COLOR = {
-    "ready": GREEN,
-    "stale": YELLOW,
-    "blocked": DIM,
-    "done": DIM,
-}
-
-
-def cmd_flows(args):
-    project_dir = find_project_dir(args.project)
-    server.PROJECT_DIR = project_dir
-    config = server._load_gcontext_yaml()
-    name = config.get("name", project_dir.name)
-
-    all_flows = flows_mod.load_flows(project_dir)
-    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {name}")
-    print(f"{DIM}Flow state is computed from files, nothing else tracks progress.{RESET}")
-    print()
-
-    if not all_flows:
-        print(f"{DIM}No flows defined in flows/*/flow.yaml{RESET}")
-        return
-
-    if args.flow:
-        if args.flow not in all_flows:
-            print(f"Error: no flow named {args.flow}. Available: {', '.join(all_flows)}", file=sys.stderr)
-            sys.exit(1)
-        all_flows = {args.flow: all_flows[args.flow]}
-
-    for flow in all_flows.values():
-        board = flows_mod.flow_board(project_dir, flow)
-        done = sum(1 for s in board if s["status"] == "done")
-        print(f"{BOLD}{flow.name}{RESET} {DIM}({done}/{len(board)} done){RESET}")
-        if flow.description:
-            print(f"{DIM}{flow.description}{RESET}")
-        for step in board:
-            color = FLOW_STATUS_COLOR.get(step["status"], "")
-            status = f"{color}{step['status']:<7}{RESET}"
-            print(f"  {status} {step['id']}: {step['description']}")
-            if step["status"] == "blocked":
-                print(f"          {DIM}waiting on: {', '.join(step['missing'])}{RESET}")
-            elif step["status"] == "ready":
-                print(f"          {DIM}complete by writing: {', '.join(step['missing'])}{RESET}")
-            elif step["status"] == "stale":
-                print(f"          {YELLOW}{', '.join(step['stale_needs'])} changed after the produces were written{RESET}")
-        print()
-
-
-CHAT_TOOLS = ",".join(
-    f"mcp__gcontext__{t}"
-    for t in ["overview", "read_context", "write_context", "run_script", "list_connections", "flows"]
-)
-
-
-def wait_for_server(port: int, project_dir: Path, timeout: float = 15.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        live = fetch_status(port)
-        if live is not None and live.get("project_dir") == str(project_dir.resolve()):
-            return True
-        time.sleep(0.3)
-    return False
-
-
-def cmd_chat(args):
-    project_dir = find_project_dir(args.project)
-    server.PROJECT_DIR = project_dir
-    config = server._load_gcontext_yaml()
-    name = config.get("name", project_dir.name)
-    port = resolve_port(args)
-    url = server_url(port)
-
-    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {name}")
-    print()
-    print("Context loaded into this session:")
-    print_ledger("chat")
-    print()
-
-    own_server = None
-    live = fetch_status(port)
-    if live is not None and live.get("project_dir") != str(project_dir.resolve()):
-        print(f"Error: port {port} is serving a different project ({live.get('name', '?')})", file=sys.stderr)
-        sys.exit(1)
-    if live is None:
-        print(f"{DIM}Starting server at {url}...{RESET}")
-        own_server = subprocess.Popen(
-            [sys.executable, "-m", "gcontext.cli", "up", str(project_dir), "--port", str(port)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        if not wait_for_server(port, project_dir):
-            own_server.terminate()
-            print("Error: server did not come up.", file=sys.stderr)
-            sys.exit(1)
-    else:
-        print(f"{DIM}Using the already running server at {url}{RESET}")
-
-    mcp_config = {"mcpServers": {"gcontext": {"type": "http", "url": url}}}
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", delete=False, prefix="gcontext-mcp-"
-    ) as f:
-        json.dump(mcp_config, f)
-        mcp_config_path = f.name
-
-    cmd = [
-        "claude",
-        "--mcp-config", mcp_config_path,
-        "--strict-mcp-config",
-        "--setting-sources", "",
-        "--allowedTools", CHAT_TOOLS,
-    ]
-    instructions = project_dir / "instructions.md"
-    if instructions.exists():
-        cmd.extend(["--system-prompt", instructions.read_text()])
-
-    print(f"{DIM}Starting claude...{RESET}")
-    try:
-        subprocess.run(cmd, cwd=project_dir)
-    finally:
-        Path(mcp_config_path).unlink(missing_ok=True)
-        if own_server is not None:
-            own_server.terminate()
-            try:
-                own_server.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                own_server.kill()
-            print(f"{DIM}Stopped the session's server.{RESET}")
+    print_ledger(project_dir)
 
 
 def main():
@@ -576,13 +402,6 @@ def main():
     context_parser = subparsers.add_parser("context", help="Show the context ledger: every pipe into the agent, per mode")
     add_common(context_parser)
 
-    flows_parser = subparsers.add_parser("flows", help="Show flow boards: step status computed from the files")
-    flows_parser.add_argument("--flow", help="Show a single flow by name")
-    add_common(flows_parser)
-
-    chat_parser = subparsers.add_parser("chat", help="Launch a dedicated claude session against this project")
-    add_common(chat_parser)
-
     args = parser.parse_args()
 
     commands = {
@@ -591,8 +410,6 @@ def main():
         "status": cmd_status,
         "connect": cmd_connect,
         "context": cmd_context,
-        "flows": cmd_flows,
-        "chat": cmd_chat,
     }
     if args.command in commands:
         commands[args.command](args)

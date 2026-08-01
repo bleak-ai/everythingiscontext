@@ -19,7 +19,6 @@ def test_init_scaffolds_agent(tmp_path):
         "instructions.md",
         "secrets.env",
         ".gitignore",
-        "flows/demo-brief/flow.yaml",
     ]:
         assert (agent / rel).is_file(), rel
     assert (agent / "connections").is_dir()
@@ -38,10 +37,10 @@ def test_init_refuses_non_empty_dir(tmp_path):
 
 def test_scaffolded_agent_works_with_cli(tmp_path):
     run_cli("init", "a", cwd=tmp_path)
-    result = run_cli("flows", "a", cwd=tmp_path)
+    result = run_cli("context", "a", cwd=tmp_path)
     assert result.returncode == 0, result.stderr
-    assert "demo-brief" in result.stdout
-    assert "capture" in result.stdout
+    assert "instructions.md" in result.stdout
+    assert "commands" in result.stdout
 
 
 def test_persist_port_replaces_commented_template_line(tmp_path):

@@ -9,7 +9,6 @@ An operations agent for a fictional SaaS company. It shows every part of the fol
 - `connections/stripe/`, `connections/cloudflare/`: connection config plus API context docs
 - `modules/company/`: a knowledge module (team, infrastructure)
 - `modules/support-workflow/`: a process module with steps, empty playbooks and logs that fill up with use
-- `flows/demo-brief/`: a three-step flow (capture, draft, finalize)
 - `archive/modules/legacy-audit/`: an archived module, out of every scan but still readable by path
 
 Run it:
