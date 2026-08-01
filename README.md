@@ -32,7 +32,7 @@ claude mcp add --transport http my-agent http://127.0.0.1:4242/mcp
 ```
 my-agent/
   gcontext.yaml          # name, description, optional port
-  instructions.md        # pushed to every agent at connect: what it starts with
+  agent.md               # your agent's definition, pushed to every agent at connect
   secrets.env            # secret values, gitignored
 
   connections/           # services the agent can use
@@ -44,11 +44,13 @@ my-agent/
   archive/               # excluded from scanning, still readable
 ```
 
-Markdown holds the context, YAML holds the config. Edit any of it with a text editor; the server reads the files on demand, so changes apply immediately. Two exceptions load at server start and need a restart to pick up edits: `instructions.md` (pushed in the MCP handshake) and command files.
+Markdown holds the context, YAML holds the config. Edit any of it with a text editor; the server reads the files on demand, so changes apply immediately. Two exceptions load at server start and need a restart to pick up edits: `agent.md` (pushed in the MCP handshake) and command files.
 
-Connected clients get five tools: `read_file`, `write_file`, `list_dir`, `grep`, `run_script`.
+At connect, every agent receives two layers of instructions through the handshake: first gcontext's own fixed instructions (shipped with the package, they explain the tools and the folder conventions), then your `agent.md` (what this particular agent is). You only ever write the second layer.
 
-`run_script` runs either ad-hoc code or a saved script by path (`scripts/` folders hold proven procedures, so they are reused instead of rewritten). Files under `connections/*/commands/` and `modules/*/commands/` register as MCP prompts, which Claude Code shows as slash commands; see "Commands" below.
+Connected clients get six tools: `read_file`, `write_file`, `list_dir`, `grep`, `run_script`, `run_adhoc_script`. Every state file is also exposed as an MCP resource at `gcontext://<path>` (a folder URI returns its listing), so runtimes that support resource mentions can attach a file directly, e.g. `@my-agent:gcontext://modules/topic/index.md`. The dashboard's copy buttons copy exactly these references.
+
+`run_script` runs a saved script by path (`scripts/` folders hold proven procedures, so they are reused instead of rewritten); `run_adhoc_script` runs ad-hoc code, which keeps a script call short and readable in the runtime's tool display. Both return readable text: a status line (exit code, duration, timed out / truncated flags), then stdout and stderr. Files under `connections/*/commands/` and `modules/*/commands/` register as MCP prompts, which Claude Code shows as slash commands; see "Commands" below.
 
 ## Your first connection
 
@@ -77,7 +79,7 @@ echo 'STRIPE_API_KEY=sk_test_...' >> my-agent/secrets.env
 
 And write `connections/stripe/index.md`: what the service is for, which endpoints matter, any usage patterns worth remembering. The agent reads this before writing scripts, and updates it as it learns.
 
-That's it. The server picks the connection up on the next tool call (no restart), `gcontext status` shows whether every declared secret has a value, and the agent can now call the API through `run_script` without ever seeing the key.
+That's it. The server picks the connection up on the next tool call (no restart), `gcontext status` shows whether every declared secret has a value, and the agent can now call the API through `run_adhoc_script` and `run_script` without ever seeing the key.
 
 ## Context ledger
 
@@ -93,13 +95,13 @@ claude --mcp-config '{"mcpServers":{"gcontext":{"type":"http","url":"http://127.
        --setting-sources ""
 ```
 
-`--strict-mcp-config` ignores every other configured MCP server, and `--setting-sources ""` skips CLAUDE.md files and user settings. Your `instructions.md` still arrives through the MCP handshake, like in any session. Adjust the URL to your project's port.
+`--strict-mcp-config` ignores every other configured MCP server, and `--setting-sources ""` skips CLAUDE.md files and user settings. Your `agent.md` still arrives through the MCP handshake, like in any session. Adjust the URL to your project's port.
 
 ## Secrets
 
-`connection.yaml` declares secret names; `secrets.env` holds the values. When the agent calls `run_script`, the values are injected as environment variables and scrubbed from the script's output. The agent can know that `STRIPE_API_KEY` exists and use it in a script, but never reads the value. `secrets.env` is gitignored by `init` and the `write_file` tool refuses to touch it.
+`connection.yaml` declares secret names; `secrets.env` holds the values. When the agent calls `run_script` or `run_adhoc_script`, the values are injected as environment variables and scrubbed from the script's output. The agent can know that `STRIPE_API_KEY` exists and use it in a script, but never reads the value. `secrets.env` is gitignored by `init` and the `write_file` tool refuses to touch it.
 
-`run_script` executes Python in a per-project venv with each connection's declared deps preinstalled (via uv).
+Both tools execute Python in a per-project venv with each connection's declared deps preinstalled (via uv).
 
 ## Archiving
 

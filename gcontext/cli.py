@@ -8,6 +8,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from . import __version__
 from . import exec as exec_mod
 from . import ledger as ledger_mod
 from . import secrets as secrets_mod
@@ -45,20 +46,12 @@ description: Describe what this agent is for.
 """
 
 INIT_INSTRUCTIONS = """\
-# Instructions
+# Agent
 
-You are the agent for this gcontext project. Your state lives in this folder:
-read it with read_file, keep it current with write_file, find things with
-list_dir and grep.
-
-- Start with list_dir(".") to see connections and modules, and read the
-  index.md of whatever you are about to use.
-- Use run_script for anything that needs an API: secrets are injected as env
-  vars (you only ever see their names), deps are preinstalled.
-- When a script proves itself, save it with write_file under a scripts/
-  folder and run it by path from then on, instead of rewriting it.
-- Record what you learn: update the relevant index.md or module so the next
-  session starts smarter than this one.
+Describe what this agent is for and how it should behave. This file is yours;
+gcontext pushes it to every runtime that connects, right after its own fixed
+framework instructions (which already cover the tools, connections, and
+modules).
 """
 
 INIT_SECRETS = """\
@@ -81,7 +74,7 @@ def cmd_init(args):
     name = target.name
     files = {
         "gcontext.yaml": INIT_GCONTEXT_YAML.format(name=name),
-        "instructions.md": INIT_INSTRUCTIONS,
+        "agent.md": INIT_INSTRUCTIONS,
         "secrets.env": INIT_SECRETS,
         ".gitignore": INIT_AGENT_GITIGNORE,
         "connections/.gitkeep": "",
@@ -201,10 +194,11 @@ def cmd_up(args):
     url = server_url(port)
 
     exec_mod.ensure_venv(project_dir)
+    n_framework_prompts = server.register_framework_prompts()
     n_commands = server.register_commands()
-    n_instruction_lines = server.load_instructions()
+    n_base_lines, n_instruction_lines = server.load_instructions()
 
-    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {name}")
+    print(f"{BOLD}gcontext{RESET} {DIM}{__version__} -{RESET} {name}")
     print(f"{DIM}State: {project_dir}{RESET}")
     print()
     print(f"Serving at {BOLD}{url}{RESET}")
@@ -218,11 +212,13 @@ def cmd_up(args):
     print("  Details:         gcontext connect")
     print()
     if n_instruction_lines:
-        print(f"Instructions: instructions.md ({n_instruction_lines} lines) is pushed to every agent at connect.")
+        print(f"Instructions: framework ({n_base_lines} lines) + agent.md ({n_instruction_lines} lines), pushed to every agent at connect.")
     else:
-        print(f"{YELLOW}Instructions: no instructions.md, agents receive nothing at connect.{RESET}")
+        print(f"{YELLOW}Instructions: no agent.md, agents receive only the framework instructions ({n_base_lines} lines) at connect.{RESET}")
+    prompt_bits = [f"{n_framework_prompts} built-in (setup)"]
     if n_commands:
-        print(f"Commands: {n_commands} registered as MCP prompts (slash commands in Claude Code).")
+        prompt_bits.append(f"{n_commands} project command(s)")
+    print(f"Prompts: {' + '.join(prompt_bits)} as MCP prompts (slash commands in Claude Code).")
     print()
     print("Connections appear below as harnesses attach. Ctrl+C stops the server,")
     print("and every harness cleanly loses access.")
@@ -266,10 +262,10 @@ def cmd_status(args):
             print(f"  {GREEN}{s['client']}{RESET} {DIM}{s['version']}{RESET}  connected {s['connected']}  last activity {s['last_seen']}")
     print()
 
-    instructions = project_dir / "instructions.md"
+    instructions = project_dir / "agent.md"
     if instructions.exists():
         lines = len(instructions.read_text().splitlines())
-        print(f"Instructions: instructions.md ({lines} lines)")
+        print(f"Instructions: agent.md ({lines} lines)")
         print()
 
     print("Connections:")
@@ -375,6 +371,7 @@ def main():
         prog="gcontext",
         description="Agent state in a folder, served at a URL. Bring your own runtime.",
     )
+    parser.add_argument("--version", action="version", version=f"gcontext {__version__}")
     subparsers = parser.add_subparsers(dest="command")
 
     init_parser = subparsers.add_parser("init", help="Scaffold a new agent state folder")

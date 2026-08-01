@@ -46,7 +46,7 @@ function TreeRow({ node, depth, selected, open, onToggle, onSelect }) {
             : <span style={{ width: 10, flexShrink: 0 }} />}
           <span style={{ fontFamily: mono, fontSize: 12, fontWeight: node.dir ? 600 : 400, color: node.dir ? C.tFolder : C.t2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{node.name}{node.dir ? "/" : ""}</span>
         </button>
-        {h && <CopyPrompt icon text={refPrompt(ref, node.dir)} title={`Copy a prompt for ${ref}`} style={{ width: 22, height: 22 }} />}
+        {h && <CopyPrompt icon text={refPrompt(ref, node.dir)} title={`Copy a reference to ${ref}`} style={{ width: 22, height: 22 }} />}
       </div>
       {node.dir && open.has(node.path) && node.children.map((c) => (
         <TreeRow key={c.path} node={c} depth={depth + 1} selected={selected} open={open} onToggle={onToggle} onSelect={onSelect} />
@@ -82,7 +82,7 @@ function Viewer({ path }) {
         <FileGlyph w={16} />
         <span style={{ fontFamily: mono, fontSize: 12.5, fontWeight: 600, color: C.ink, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.path}</span>
         <span style={{ fontFamily: mono, fontSize: 10.5, color: C.t3, flexShrink: 0 }}>{fileLabel(path)} · {file.size} B</span>
-        <CopyPrompt text={refPrompt(file.path, false)} title={`Copy a prompt to read ${file.path}`} style={{ padding: "6px 12px" }} />
+        <CopyPrompt text={refPrompt(file.path, false)} title={`Copy a reference to ${file.path}`} style={{ padding: "6px 12px" }} />
       </div>
       <div style={{ padding: "18px 20px" }}>
         {isMd ? (

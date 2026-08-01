@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { getJSON, filePrompt } from "./lib.js";
+import { getJSON, fileRef } from "./lib.js";
 import { C, mono, Chip, GhostBtn, sectionLabel, useHover, useIsMobile, pageTitle, EmptyState } from "./ui.jsx";
 import CopyPrompt from "./Copy.jsx";
 
@@ -107,7 +107,7 @@ function Row({ e, first, onOpen }) {
       <TierChip tier={e.tier} />
       <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 600, color: e.error ? C.danger : C.ink, flexShrink: 0 }}>{e.name}</span>
       <span style={{ fontSize: 12, color: C.tMuted, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.detail}{e.error ? " · failed" : ""}</span>
-      {ref && h && <CopyPrompt icon text={filePrompt(ref)} title={`Copy a prompt to read ${ref}`} style={{ width: 22, height: 22 }} />}
+      {ref && h && <CopyPrompt icon text={fileRef(ref)} title={`Copy a reference to ${ref}`} style={{ width: 22, height: 22 }} />}
       <span title={`${w.label}: ${nfmt(e.tokens_out)} tokens added to context`} style={{ display: "inline-flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
         <Bar frac={w.frac} color={w.color} w={44} />
         <span style={{ ...monoNum, fontSize: 11, color: heavy ? C.accent : C.t3, width: 56, textAlign: "right", fontWeight: heavy ? 600 : 400 }}>{nfmt(e.tokens_out)} tk</span>
@@ -175,7 +175,7 @@ function EventModal({ e, onClose }) {
             <div style={{ ...label, marginBottom: 6 }}>What it was about</div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", background: C.subtle, border: `1px solid ${C.borderInner}`, borderRadius: 9 }}>
               <span style={{ fontFamily: mono, fontSize: 13, color: C.ink, lineHeight: 1.6, wordBreak: "break-word", flex: 1 }}>{e.detail}</span>
-              {ref && <CopyPrompt icon text={filePrompt(ref)} title={`Copy a prompt to read ${ref}`} />}
+              {ref && <CopyPrompt icon text={fileRef(ref)} title={`Copy a reference to ${ref}`} />}
             </div>
           </div>
         )}

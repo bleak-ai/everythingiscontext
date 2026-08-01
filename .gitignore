@@ -10,4 +10,4 @@ secrets.env
 
 # dashboard build artifacts
 web/node_modules/
-src/gcontext/web_dist/
+gcontext/web_dist/

@@ -1,11 +1,12 @@
 """File access for the read_file, write_file, list_dir and grep tools.
 
 Every path is resolved and confined to the project root; secrets.env is
-unreadable and unwritable, connection.yaml is unwritable (the secret grant
-stays human-edited). Errors come back as strings because tool results are
-strings the agent reads.
+unreadable and unwritable (secret values never enter the context window).
+Errors come back as strings because tool results are strings the agent
+reads.
 """
 
+import difflib
 import fnmatch
 import re
 from pathlib import Path
@@ -47,6 +48,26 @@ def resolve_browser_path(root: Path, path: str) -> tuple[Path | None, str | None
     return target, None
 
 
+def walk_files(root: Path) -> list[str]:
+    """Relative paths of every listable state file, sorted.
+
+    Same visibility as the scanning surface: machine folders and secrets.env
+    never appear, archive/ is not scanned (still readable by path).
+    """
+    resolved = root.resolve()
+    out = []
+    for f in sorted(resolved.rglob("*")):
+        if not f.is_file():
+            continue
+        parts = f.relative_to(resolved).parts
+        if (SKIP_DIRS | {"archive"}) & set(parts):
+            continue
+        if f.name == "secrets.env":
+            continue
+        out.append("/".join(parts))
+    return out
+
+
 def read_file(root: Path, path: str) -> str:
     target, error = resolve_path(root, path)
     if error:
@@ -58,16 +79,92 @@ def read_file(root: Path, path: str) -> str:
     return target.read_text()
 
 
+def _index_siblings(folder: Path) -> list[str]:
+    """Names an index.md in this folder must reference: every visible sibling.
+
+    Machine folders, secrets.env and archive/ (retired state, not part of the
+    map) are exempt. Directory names come without the trailing slash so a
+    plain-name mention in the index counts.
+    """
+    names = []
+    for entry in sorted(folder.iterdir(), key=lambda e: e.name):
+        if entry.name in SKIP_DIRS | {"index.md", "secrets.env", "archive"}:
+            continue
+        names.append(entry.name)
+    return names
+
+
+def _index_warning(root: Path, target: Path, content: str, existed: bool) -> str:
+    """Warning text for the index.md map convention, or '' when the write is fine.
+
+    Writing an index.md: warn about siblings the content never mentions.
+    Creating any other file: warn when the parent's index.md does not mention it.
+    Advisory only, the write itself always goes through.
+    """
+    if target.name == "index.md":
+        missing = [n for n in _index_siblings(target.parent) if n not in content]
+        if missing:
+            return (
+                f" Warning: this index.md does not reference: {', '.join(missing)}. "
+                "An index.md must link every sibling with one line."
+            )
+        return ""
+    if existed or target.name == "agent.md":
+        return ""
+    index = target.parent / "index.md"
+    if index.is_file() and target.name not in index.read_text():
+        rel = "/".join(index.relative_to(root.resolve()).parts)
+        return (
+            f" Warning: {rel} does not mention {target.name}. "
+            "Add a one-line link for it there."
+        )
+    return ""
+
+
+DIFF_MAX_LINES = 200
+
+
+def _write_diff(path: str, before: str, after: str) -> str:
+    """Unified diff of a write, capped at DIFF_MAX_LINES, '' when identical."""
+    lines = list(
+        difflib.unified_diff(
+            before.splitlines(keepends=True),
+            after.splitlines(keepends=True),
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+        )
+    )
+    if not lines:
+        return ""
+    if len(lines) > DIFF_MAX_LINES:
+        lines = lines[:DIFF_MAX_LINES] + [f"... diff truncated at {DIFF_MAX_LINES} lines\n"]
+    diff = "".join(lines)
+    if not diff.endswith("\n"):
+        diff += "\n"
+    return "\n" + diff
+
+
 def write_file(root: Path, path: str, content: str) -> str:
     target, error = resolve_path(root, path)
     if error:
         return f"Error: {error}."
-    if target.name == "connection.yaml":
-        return "Error: cannot write to connection.yaml through the agent."
-
+    existed = target.exists()
+    before = ""
+    if existed and target.is_file():
+        before = target.read_text(errors="replace")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content)
-    return f"Written: {path} ({len(content)} bytes)"
+    if existed:
+        line = f"Updated: {path} ({len(content)} bytes)."
+        if before == content:
+            line = f"Unchanged: {path} (content identical)."
+    else:
+        line = f"Created: {path} ({len(content)} bytes, {len(content.splitlines())} lines)."
+    return (
+        line
+        + _index_warning(root, target, content, existed)
+        + (_write_diff(path, before, content) if existed else "")
+    )
 
 
 def list_dir(root: Path, path: str = ".") -> str:

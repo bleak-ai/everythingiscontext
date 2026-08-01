@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getJSON, filePrompt, folderPrompt } from "./lib.js";
+import { getJSON, fileRef, folderRef } from "./lib.js";
 import { C, mono, Chip, cardBase, cardHover, cardGrid, pageTitle, sectionLabel, EmptyState, useHover } from "./ui.jsx";
 import CopyPrompt from "./Copy.jsx";
 
@@ -13,7 +13,7 @@ function FileRow({ path }) {
   return (
     <div {...hp} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
       <span style={{ fontFamily: mono, fontSize: 11.5, color: h ? C.ink : C.t2, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", transition: "color .12s" }} title={path}>{path}</span>
-      <CopyPrompt icon text={filePrompt(path)} title={`Copy a prompt to read ${path}`} />
+      <CopyPrompt icon text={fileRef(path)} title={`Copy a reference to ${path}`} />
     </div>
   );
 }
@@ -48,7 +48,7 @@ function ConnectionCard({ conn }) {
         </div>
       )}
       <div style={{ marginTop: "auto", paddingTop: 4 }}>
-        <CopyPrompt text={folderPrompt(folder)} title={`Copy a prompt to explore ${folder}`} style={{ width: "100%", justifyContent: "center" }} />
+        <CopyPrompt text={folderRef(folder)} title={`Copy a reference to ${folder}`} style={{ width: "100%", justifyContent: "center" }} />
       </div>
     </div>
   );

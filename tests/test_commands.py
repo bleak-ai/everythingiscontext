@@ -108,4 +108,26 @@ def test_prompt_rejects_missing_required_argument(tmp_path):
 def test_commands_ledger_pipe(project):
     _write_commands(project)
     g6 = [p for p in ledger.build(project) if p["id"] == "G6"]
-    assert g6 and "2 command(s)" in g6[0]["detail"]
+    assert g6 and "1 built-in (setup) + 2 project command(s)" in g6[0]["detail"]
+
+
+def test_register_framework_prompts_setup():
+    mcp = FastMCP("t")
+    assert commands.register_framework_prompts(mcp) == 1
+
+    async def go():
+        async with Client(mcp) as c:
+            listed = await c.list_prompts()
+            empty = await c.get_prompt("setup", {})
+            filled = await c.get_prompt("setup", {"request": "add a slack connection"})
+            return listed, empty, filled
+
+    listed, empty, filled = asyncio.run(go())
+    setup = next(p for p in listed if p.name == "setup")
+    assert setup.description
+    empty_text = empty.messages[0].content.text
+    assert '""' in empty_text and "$request" not in empty_text
+    filled_text = filled.messages[0].content.text
+    assert "add a slack connection" in filled_text
+    for step in ("Add a connection", "Add a module", "Health check", "Propose the plan"):
+        assert step in filled_text

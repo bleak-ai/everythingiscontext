@@ -46,7 +46,7 @@ def _version() -> str:
 async def api_project(request: Request) -> JSONResponse:
     root = _root()
     config = state.load_gcontext_yaml(root)
-    instructions = root / "instructions.md"
+    instructions = root / "agent.md"
     return JSONResponse({
         "name": config.get("name", root.name),
         "description": config.get("description", ""),
@@ -200,7 +200,7 @@ async def api_events(request: Request) -> JSONResponse:
 
 _DIST_CANDIDATES = [
     Path(__file__).parent / "web_dist",
-    Path(__file__).parents[2] / "web" / "dist",
+    Path(__file__).parents[1] / "web" / "dist",
 ]
 
 

@@ -1,11 +1,12 @@
 """The MCP surface: everything an attached agent can reach, in one file.
 
-Five tools (defined below, their agent-facing text in prompts/tools/*.md),
-commands registered as prompts, a /status route, and session tracking.
+Six tools (defined below, their agent-facing text in prompts/tools/*.md),
+state files as MCP resources (gcontext://<path>, listed live), commands
+registered as prompts, a /status route, and session tracking.
 The actual work lives in the per-concern modules:
 
     fs.py        read_file / write_file / list_dir / grep (path confinement, guards)
-    exec.py      run_script (venv, secrets injection, output scrubbing)
+    exec.py      run_script / run_adhoc_script (venv, secrets injection, output scrubbing)
     state.py     connections / modules / archive scanning
     secrets.py   secrets.env parsing and output scrubbing
     ledger.py    the context ledger
@@ -23,6 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastmcp import FastMCP
+from fastmcp.resources import Resource
 from fastmcp.server.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -89,8 +91,8 @@ def _event_detail(name: str, arguments: dict) -> str:
         path = arguments.get("path") or "."
         return f"{pattern!r} in {path}"
     if name == "run_script":
-        if arguments.get("path"):
-            return str(arguments["path"])
+        return str(arguments.get("path", "?"))
+    if name == "run_adhoc_script":
         return f"inline code ({len(arguments.get('code') or '')} chars)"
     if arguments.get("path"):
         return str(arguments["path"])
@@ -151,6 +153,23 @@ class ConnectionTracker(Middleware):
                      tier=2)
         return await call_next(context)
 
+    async def on_list_resources(self, context, call_next):
+        """The resource list is the state folder, scanned live: every listable
+        file at gcontext://<path>, so runtimes can offer them for attachment."""
+        result = await call_next(context)
+        for rel in fs.walk_files(PROJECT_DIR):
+            mime = "text/markdown" if rel.endswith(".md") else "text/plain"
+            result.append(Resource(uri=f"gcontext://{rel}", name=rel, mime_type=mime))
+        return result
+
+    async def on_read_resource(self, context, call_next):
+        uri = str(getattr(context.message, "uri", "?"))
+        start = time.perf_counter()
+        result = await call_next(context)
+        record_event(_session_id(context), "resource", "resource", detail=uri,
+                     duration_ms=round((time.perf_counter() - start) * 1000))
+        return result
+
     async def on_message(self, context, call_next):
         session = SESSIONS.get(_session_id(context))
         if session:
@@ -176,51 +195,107 @@ def register_commands() -> int:
     return commands_mod.register_commands(mcp, PROJECT_DIR)
 
 
-def load_instructions() -> int:
-    """Serve the project's instructions.md in the MCP handshake.
+def register_framework_prompts() -> int:
+    """Register the package's own prompts (setup). Call once at startup."""
+    return commands_mod.register_framework_prompts(mcp)
 
-    This is THE file pushed to every agent at connect: what it says is exactly
-    what the agent starts with, the ledger declares it as G0, and editing the
-    file (plus a restart) changes what every future session receives. Returns
-    the line count, 0 if the file does not exist (nothing is pushed then).
+
+def load_instructions() -> tuple[int, int]:
+    """Serve instructions in the MCP handshake: gcontext's own, then the project's.
+
+    Two files, two owners. prompts/framework-instructions.md ships with the
+    framework (what gcontext is, how the tools and the folder work; ledger
+    pipe G0) and is always pushed. The project's agent.md defines the
+    particular agent (ledger pipe G1) and is appended when it exists. Editing
+    the project file (plus a restart) changes what every future session
+    receives. Returns (base_lines, project_lines); project_lines is 0 when
+    the file is missing.
     """
-    instructions = PROJECT_DIR / "instructions.md"
+    base = (_PROMPTS_DIR / "framework-instructions.md").read_text()
+    instructions = PROJECT_DIR / "agent.md"
     if not instructions.exists():
-        mcp.instructions = None
-        return 0
+        mcp.instructions = base
+        return len(base.splitlines()), 0
     text = instructions.read_text()
-    mcp.instructions = text
-    return len(text.splitlines())
+    mcp.instructions = f"{base}\n{text}"
+    return len(base.splitlines()), len(text.splitlines())
 
 
-@mcp.tool(description=_tool_doc("read_file"))
+@mcp.resource("gcontext://{path*}",
+              description=(_PROMPTS_DIR / "resources.md").read_text().strip())
+def state_resource(path: str) -> str:
+    rel = path.rstrip("/")
+    target, error = fs.resolve_path(PROJECT_DIR, rel)
+    if error:
+        return f"Error: {error}."
+    if target.is_dir():
+        return fs.list_dir(PROJECT_DIR, rel or ".")
+    return fs.read_file(PROJECT_DIR, rel)
+
+
+# output_schema=None on every tool: with a schema, FastMCP wraps the string
+# result as structured content {"result": ...} and runtimes like Claude Code
+# display that JSON (newlines escaped) instead of the readable text block.
+@mcp.tool(description=_tool_doc("read_file"), output_schema=None)
 def read_file(path: str) -> str:
     return fs.read_file(PROJECT_DIR, path)
 
 
-@mcp.tool(description=_tool_doc("write_file"))
+@mcp.tool(description=_tool_doc("write_file"), output_schema=None)
 def write_file(path: str, content: str) -> str:
     return fs.write_file(PROJECT_DIR, path, content)
 
 
-@mcp.tool(description=_tool_doc("list_dir"))
+@mcp.tool(description=_tool_doc("list_dir"), output_schema=None)
 def list_dir(path: str = ".") -> str:
     return fs.list_dir(PROJECT_DIR, path)
 
 
-@mcp.tool(description=_tool_doc("grep"))
+@mcp.tool(description=_tool_doc("grep"), output_schema=None)
 def grep(pattern: str, path: str = ".", glob: str = "") -> str:
     return fs.grep(PROJECT_DIR, pattern, path=path, glob=glob)
 
 
-@mcp.tool(description=_tool_doc("run_script"))
+def _exec_result(result: dict) -> str:
+    """Render an exec dict as readable text: status line, stdout, stderr, hint.
+
+    Text only, no structured content: when a tool declares structured content,
+    Claude Code displays that JSON instead of the text block, and stdout
+    renders with escaped newlines. The status line keeps the structured facts
+    (exit code, duration, timed out / truncated).
+    """
+    status = f"exit {result['exit_code']} | {result['duration_ms']} ms"
+    if result["timed_out"]:
+        status += " | timed out"
+    if result["truncated"]:
+        status += " | truncated"
+    parts = [f"[{status}]"]
+    if result["stdout"].strip():
+        parts.append(result["stdout"].rstrip())
+    if result["stderr"].strip():
+        parts.append(f"[stderr]\n{result['stderr'].rstrip()}")
+    if not result["stdout"].strip() and not result["stderr"].strip():
+        parts.append("(no output)")
+    if result.get("hint"):
+        parts.append(f"[hint] {result['hint']}")
+    return "\n".join(parts)
+
+
+@mcp.tool(description=_tool_doc("run_script"), output_schema=None)
 def run_script(
-    code: str = "",
-    path: str = "",
+    path: str,
     args: list[str] | None = None,
     params: dict[str, str] | None = None,
 ) -> str:
-    return exec_mod.run(PROJECT_DIR, code=code, path=path, args=args, params=params)
+    return _exec_result(exec_mod.run_script(PROJECT_DIR, path, args=args, params=params))
+
+
+@mcp.tool(description=_tool_doc("run_adhoc_script"), output_schema=None)
+def run_adhoc_script(
+    code: str,
+    params: dict[str, str] | None = None,
+) -> str:
+    return _exec_result(exec_mod.run_adhoc_script(PROJECT_DIR, code, params=params))
 
 
 

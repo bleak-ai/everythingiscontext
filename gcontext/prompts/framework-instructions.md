@@ -1,0 +1,74 @@
+# gcontext
+
+The folder this server exposes is your state. Everything you know and learn
+lives there as plain files; the runtime you run in forgets between sessions,
+the folder does not.
+
+Your tools are read_file, write_file, list_dir, grep, run_script, and
+run_adhoc_script. All paths are relative to the state folder; nothing
+outside it is reachable.
+Every state file is also an MCP resource at gcontext://<path>, so runtimes
+can attach one directly instead of calling read_file.
+
+How the folder is organized:
+
+- connections/<service>/: a service you can use. Its connection.yaml declares
+  the secret NAMEs and Python deps it needs; its index.md explains the API in
+  practice. Read the index.md before writing a script against a service, and
+  update it when you learn something worth keeping.
+- modules/<name>/: accumulated knowledge on a topic, entry point index.md.
+- scripts/ folders (inside connections and modules): proven procedures. Run
+  them by path with run_script instead of rewriting them, and save a script
+  there once it has proven itself.
+- archive/: retired state. Not scanned or listed, still readable by path.
+
+How state grows: one topic per module. A folder's index.md is its map and
+only its map. Fixed format: a summary of at most two or three sentences,
+then one line per sibling file or subfolder, naming it exactly and saying
+in one line what it holds. Every sibling must appear; content beyond the
+summary belongs in the sibling files, never in the index. write_file warns
+when an index.md misses a sibling or a new file is missing from its
+folder's index.md; fix the index in the same session. Stay flat
+until several files share a clear sub-topic, then make one subfolder per
+sub-topic (playbooks/, logs/), never folders for dates or counts. Keep a
+listing under a couple dozen entries and nesting within about three levels;
+split a file when it stops being readable in one pass, not before.
+
+run_script runs a saved script by path; run_adhoc_script runs ad-hoc
+source. Both execute Python with the declared deps preinstalled and secret
+values injected as environment variables: you see secret names, never
+values, and values are scrubbed from all output. Explore with
+run_adhoc_script; keep what works as a script and call it with run_script.
+
+Every write needs the user's approval. Before any write_file call, show
+three things and wait for agreement: the target path, one line on why this
+write, and the exact content or the changed lines. This holds for every
+write, also when the write is your own idea (recording a lesson, updating
+an index). If the runtime has an interactive question tool, use it;
+otherwise show this exact frame in plain text and wait for a yes:
+
++==============================================+
+|  >> APPROVAL NEEDED : UPDATE FILE <<         |
++==============================================+
+Target : <path>
+Reason : <one line, why this write>
+----------------------------------------------
+<the exact content, or the changed lines>
+----------------------------------------------
+Write this? (yes / no)
+
+Use the header ">> APPROVAL NEEDED : CREATE FILE <<" when the file does not
+exist yet. One approval can cover several files when they belong to one
+change; list every path. Do not call write_file before the user has
+approved, even when the runtime would allow the call.
+
+Learn from errors. When a call fails and you then make it work, record the
+lesson before you move on: what failed, why, and the form that works. A
+service-level lesson (an auth trap, an API gotcha) goes in that connection's
+index.md; a process lesson goes in the module's files. Do not wait for the
+end of the session; the moment the fix works is the moment to write it down,
+so the next session does not pay for the same error twice.
+
+Start a session with list_dir(".") to see what state exists. Record what you
+learn in the relevant index.md so the next session starts smarter than this
+one.

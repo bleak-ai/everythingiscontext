@@ -21,14 +21,15 @@ export function copyText(text) {
   ta.remove();
 }
 
-// Agent-ready prompts for a file or folder reference. The copied text names
-// the gcontext MCP server, so any agent can locate the path without guessing
-// which server or tool it belongs to.
-export const filePrompt = (path) =>
-  `From the gcontext MCP server, read "${path}" and use it as context for this task.`;
-export const folderPrompt = (path) =>
-  `From the gcontext MCP server, explore the folder "${path.replace(/\/$/, "")}/": check its files and read the relevant ones.`;
-export const refPrompt = (path, isDir) => (isDir ? folderPrompt(path) : filePrompt(path));
+// Direct MCP resource references: @<server>:gcontext://<path>. Runtimes that
+// support resource mentions (Claude Code et al.) resolve these mechanically;
+// the server exposes every state file at gcontext://<path>. The server name
+// is set once by App.jsx from /api/project.
+let serverName = "gcontext";
+export const setServerName = (name) => { if (name) serverName = name; };
+export const fileRef = (path) => `@${serverName}:gcontext://${path}`;
+export const folderRef = (path) => `@${serverName}:gcontext://${path.replace(/\/$/, "")}/`;
+export const refPrompt = (path, isDir) => (isDir ? folderRef(path) : fileRef(path));
 
 // File-card label: "notes.md" -> "md", extensionless -> "file". Dotfiles (".env")
 // stay "file" (lastIndexOf > 0), so the label never repeats the whole name.

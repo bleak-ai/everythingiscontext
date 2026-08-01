@@ -92,7 +92,7 @@ export default function Overview({ project, sessions }) {
       {(project.has_instructions || archivedParts.length > 0) && (
         <div style={{ marginTop: 22, display: "flex", flexDirection: "column", gap: 6, fontSize: 12.5, color: C.tMuted }}>
           {project.has_instructions && (
-            <span>System prompt: <span style={{ fontFamily: mono }}>instructions.md</span> ({project.instructions_lines} lines)</span>
+            <span>System prompt: <span style={{ fontFamily: mono }}>agent.md</span> ({project.instructions_lines} lines)</span>
           )}
           {archivedParts.length > 0 && (
             <span><span style={{ fontFamily: mono }}>archive/</span>: {archivedParts.join(", ")} (not scanned, readable by path)</span>

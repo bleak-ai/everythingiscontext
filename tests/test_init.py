@@ -16,7 +16,7 @@ def test_init_scaffolds_agent(tmp_path):
     agent = tmp_path / "my-agent"
     for rel in [
         "gcontext.yaml",
-        "instructions.md",
+        "agent.md",
         "secrets.env",
         ".gitignore",
     ]:
@@ -39,7 +39,7 @@ def test_scaffolded_agent_works_with_cli(tmp_path):
     run_cli("init", "a", cwd=tmp_path)
     result = run_cli("context", "a", cwd=tmp_path)
     assert result.returncode == 0, result.stderr
-    assert "instructions.md" in result.stdout
+    assert "agent.md" in result.stdout
     assert "commands" in result.stdout
 
 

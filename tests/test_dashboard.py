@@ -10,7 +10,7 @@ from gcontext import dashboard, server
 @pytest.fixture
 def project(tmp_path, monkeypatch):
     (tmp_path / "gcontext.yaml").write_text("name: t\ndescription: test agent\n")
-    (tmp_path / "instructions.md").write_text("# Instructions\nbe useful\n")
+    (tmp_path / "agent.md").write_text("# Agent\nbe useful\n")
     (tmp_path / "secrets.env").write_text("API_KEY=sk-verysecret\nEMPTY=\n")
     conn = tmp_path / "connections" / "gmail"
     conn.mkdir(parents=True)

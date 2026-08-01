@@ -123,6 +123,30 @@ def discover(root: Path) -> list[Path]:
     )
 
 
+def register_framework_prompts(mcp) -> int:
+    """Register the framework's own prompts, shipped in the package.
+
+    Same file format as project commands, but framework-owned: they update
+    with the package and exist in every instance. Currently one: `setup`,
+    the guided add-a-connection / add-a-module / health-check flow.
+    """
+    from fastmcp.prompts.prompt import Prompt
+
+    prompts_dir = Path(__file__).parent / "prompts"
+    count = 0
+    for path in sorted(prompts_dir.glob("*.md")):
+        if path.stem in ("framework-instructions", "resources", "README"):
+            continue
+        meta, body = parse_command(path.read_text(encoding="utf-8"))
+        fn = _render_fn(body, meta.get("parameters") or [])
+        fn.__name__ = path.stem
+        mcp.add_prompt(
+            Prompt.from_function(fn, name=path.stem, description=meta.get("description", ""))
+        )
+        count += 1
+    return count
+
+
 def register_commands(mcp, root: Path) -> int:
     """Scan connection and module `commands/` folders and register each file
     as a prompt named `<owner>__<command>`."""

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getJSON, filePrompt } from "./lib.js";
+import { getJSON, fileRef } from "./lib.js";
 import { C, mono, Chip, cardBase, cardHover, pageTitle, sectionLabel, EmptyState, useHover } from "./ui.jsx";
 import CopyPrompt from "./Copy.jsx";
 
@@ -33,7 +33,7 @@ function CommandCard({ cmd }) {
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontFamily: mono, fontSize: 10.5, color: C.t3, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={cmd.path}>{cmd.path}</span>
-        <CopyPrompt icon text={filePrompt(cmd.path)} title={`Copy a prompt to read ${cmd.path}`} />
+        <CopyPrompt icon text={fileRef(cmd.path)} title={`Copy a reference to ${cmd.path}`} />
       </div>
       {!cmd.error && (
         <div style={{ marginTop: "auto", display: "flex", alignItems: "center", gap: 8 }}>

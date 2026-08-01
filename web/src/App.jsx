@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getJSON, relSeen } from "./lib.js";
+import { getJSON, relSeen, setServerName } from "./lib.js";
 import { C, mono, UiProvider, useHover, useIsMobile } from "./ui.jsx";
 import Overview from "./Overview.jsx";
 import Connections from "./Connections.jsx";
@@ -81,7 +81,7 @@ export default function App() {
   useEffect(() => { localStorage.setItem("gc.section", section); }, [section]);
 
   const refresh = () => {
-    getJSON("/api/project").then((p) => { setProject(p); setErr(null); }).catch((e) => setErr(e.message));
+    getJSON("/api/project").then((p) => { setProject(p); setServerName(p.name); setErr(null); }).catch((e) => setErr(e.message));
     getJSON("/api/sessions").then((d) => setSessions(d.sessions)).catch(() => {});
   };
   useEffect(() => {

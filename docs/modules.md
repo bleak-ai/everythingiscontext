@@ -46,6 +46,18 @@ modules/company/
 
 There is no enforced schema beyond `index.md`. Different modules have different structures depending on what they do. When `index.md` gets long, split it into more files and link them from `index.md`.
 
+## How a module grows
+
+Nothing is enforced in code; these are the conventions the framework instructions push to every connected agent. Retrieval in gcontext is `list_dir` and `grep`, no index and no search, so the tree itself is the index. The rules keep it navigable:
+
+- One topic per module. When a second topic appears, it is a second module, not a subfolder.
+- A folder's `index.md` is its map: what the folder holds, plus one line per child file or subfolder. A reader (human or agent) should know where to go after reading only the `index.md`.
+- Stay flat until several files share a clear sub-topic. Then make one subfolder per sub-topic (`playbooks/`, `logs/`, `scripts/`), and give it its own `index.md` if it holds more than a handful of files. Never create folders for dates or counts; `logs/2026/08/` hides content that one append-only file with a stated format holds better.
+- Soft limits, not caps: keep a single listing under a couple dozen entries, and nesting within about three levels below `modules/`. Passing them is a signal to reorganize, not an error.
+- Split a file when it stops being readable in one pass, not before. Many small fragments cost more round-trips than one coherent file.
+
+The soft limits deliberately replace harder rules from an earlier design (a fixed maximum of files per level): agents follow numeric caps literally and produce premature subfolders. Judgment plus a self-describing `index.md` scales further.
+
 ## How someone uses a module
 
 1. Download the module folder (or copy it)
