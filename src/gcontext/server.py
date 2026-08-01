@@ -1,6 +1,6 @@
 """The MCP surface: everything an attached agent can reach, in one file.
 
-Six tools (defined below, their agent-facing text in prompts/tools/*.md),
+Five tools (defined below, their agent-facing text in prompts/tools/*.md),
 commands registered as prompts, a /status route, and session tracking.
 The actual work lives in the per-concern modules:
 
@@ -30,7 +30,6 @@ from starlette.responses import JSONResponse
 from . import commands as commands_mod
 from . import exec as exec_mod
 from . import fs
-from . import ledger as ledger_mod
 from . import secrets as secrets_mod
 from . import state
 
@@ -192,72 +191,6 @@ def load_instructions() -> int:
     text = instructions.read_text()
     mcp.instructions = text
     return len(text.splitlines())
-
-
-@mcp.tool(description=_tool_doc("overview"))
-def overview() -> str:
-    root = PROJECT_DIR
-    config = state.load_gcontext_yaml(root)
-    connections = state.load_connections(root)
-    secrets = secrets_mod.load(root)
-    modules = state.discover_modules(root)
-
-    lines = []
-    name = config.get("name", root.name)
-    desc = config.get("description", "")
-    lines.append(f"# {name}")
-    if desc:
-        lines.append(desc)
-    lines.append("")
-
-    lines.append("## Context ledger")
-    lines.append("Everything that enters your context from this server, and how:")
-    lines.extend(ledger_mod.render_plain(root))
-    lines.append("")
-
-    instructions = root / "instructions.md"
-    if instructions.exists():
-        lines.append(f"System prompt: instructions.md ({len(instructions.read_text().splitlines())} lines)")
-        lines.append("")
-
-    lines.append("## Connections")
-    if not connections:
-        lines.append("No connections defined.")
-    for cname, conn in connections.items():
-        filled = sum(1 for s in conn.secrets if s in secrets and secrets[s])
-        total = len(conn.secrets)
-        status = "ready" if filled == total else f"missing {total - filled} secret(s)"
-        lines.append(f"- **{cname}**: {status}")
-        if conn.description:
-            lines.append(f"  {conn.description}")
-        for s in conn.secrets:
-            has_value = s in secrets and bool(secrets[s])
-            lines.append(f"  - {s}: {'filled' if has_value else 'MISSING'}")
-        if conn.deps:
-            lines.append(f"  Deps: {', '.join(conn.deps)}")
-        for f in state.connection_files(root, cname):
-            lines.append(f"  - {f}")
-    lines.append("")
-
-    if modules:
-        lines.append("## Modules")
-        for mname, mod in modules.items():
-            tag_str = f" [{', '.join(mod.tags)}]" if mod.tags else ""
-            lines.append(f"- **{mname}** (v{mod.version}){tag_str}")
-            if mod.description:
-                lines.append(f"  {mod.description}")
-            for f in state.module_files(root, mname):
-                lines.append(f"  - {f}")
-        lines.append("")
-
-    archived = state.archived(root)
-    if archived:
-        lines.append("## Archive")
-        for cat, items in archived.items():
-            lines.append(f"- archive/{cat}/: {', '.join(items)}")
-        lines.append("Archived items are never scanned or listed above; read them by path if needed.")
-
-    return "\n".join(lines).rstrip()
 
 
 @mcp.tool(description=_tool_doc("read_file"))

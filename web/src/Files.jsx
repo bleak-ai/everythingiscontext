@@ -2,12 +2,15 @@ import React, { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import { getJSON } from "./lib.js";
-import { C, mono, label } from "./ui.jsx";
+import { getJSON, fileLabel, refPrompt } from "./lib.js";
+import { C, mono, pageTitle, sectionLabel, EmptyState, useHover, FileGlyph } from "./ui.jsx";
+import CopyPrompt from "./Copy.jsx";
 
 // Files = read-only browser over the project folder. Left: the tree from
-// /api/tree (secrets.env and machine folders are excluded server-side).
+// /api/tree (secrets.env and machine folders are already excluded server-side).
 // Right: the selected file, markdown rendered, everything else plain text.
+// Every row and the reading pane can copy an agent-ready prompt pointing at
+// the path inside the gcontext MCP server.
 
 function buildTree(entries) {
   const roots = [];
@@ -28,15 +31,23 @@ function buildTree(entries) {
 }
 
 function TreeRow({ node, depth, selected, open, onToggle, onSelect }) {
+  const [h, hp] = useHover();
   const isSel = selected === node.path;
+  const ref = node.dir ? `${node.path}/` : node.path;
   return (
     <>
-      <button
-        onClick={() => (node.dir ? onToggle(node.path) : onSelect(node.path))}
-        title={node.path}
-        style={{ all: "unset", cursor: "pointer", display: "block", width: "100%", boxSizing: "border-box", padding: "2px 0", paddingLeft: depth * 14, fontFamily: mono, fontSize: 12, lineHeight: 1.7, color: node.dir ? C.ink : isSel ? C.accent : C.t2, fontWeight: node.dir || isSel ? 600 : 400, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {node.dir ? (open.has(node.path) ? "▾ " : "▸ ") : "  "}{node.name}{node.dir ? "/" : ""}
-      </button>
+      <div {...hp} style={{ display: "flex", alignItems: "center", gap: 6, borderRadius: 6, background: isSel ? "#fff" : h ? C.rowHover : "transparent", boxShadow: isSel ? "0 1px 2px rgba(28,27,25,.06)" : "none", transition: "background .1s", paddingRight: 6 }}>
+        <button
+          onClick={() => (node.dir ? onToggle(node.path) : onSelect(node.path))}
+          title={node.path}
+          style={{ all: "unset", cursor: "pointer", flex: 1, minWidth: 0, boxSizing: "border-box", padding: "5px 0 5px 8px", paddingLeft: 8 + depth * 14, display: "flex", alignItems: "center", gap: 7 }}>
+          {node.dir
+            ? <span style={{ fontSize: 9, color: C.t3, width: 10, flexShrink: 0 }}>{open.has(node.path) ? "▾" : "▸"}</span>
+            : <span style={{ width: 10, flexShrink: 0 }} />}
+          <span style={{ fontFamily: mono, fontSize: 12, fontWeight: node.dir ? 600 : 400, color: node.dir ? C.tFolder : C.t2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{node.name}{node.dir ? "/" : ""}</span>
+        </button>
+        {h && <CopyPrompt icon text={refPrompt(ref, node.dir)} title={`Copy a prompt for ${ref}`} style={{ width: 22, height: 22 }} />}
+      </div>
       {node.dir && open.has(node.path) && node.children.map((c) => (
         <TreeRow key={c.path} node={c} depth={depth + 1} selected={selected} open={open} onToggle={onToggle} onSelect={onSelect} />
       ))}
@@ -53,22 +64,35 @@ function Viewer({ path }) {
     getJSON(`/api/file?path=${encodeURIComponent(path)}`).then(setFile).catch((e) => setErr(e.message));
   }, [path]);
 
-  if (!path) return <p style={{ fontFamily: mono, fontSize: 11.5, color: C.t3, margin: 0 }}>pick a file on the left</p>;
-  if (err) return <p style={{ fontFamily: mono, fontSize: 12, color: C.danger, margin: 0 }}>{path}: {err}</p>;
-  if (!file) return <p style={{ fontFamily: mono, fontSize: 11.5, color: C.t3, margin: 0 }}>loading…</p>;
+  if (!path) {
+    return (
+      <EmptyState style={{ padding: "56px 28px" }}>
+        <div style={{ fontFamily: mono, fontSize: 22, color: C.faint, marginBottom: 12 }}>◌</div>
+        <div style={{ fontSize: 13.5 }}>Pick a file on the left to read it.</div>
+      </EmptyState>
+    );
+  }
+  if (err) return <div style={{ color: C.danger, fontSize: 13, padding: 18 }}>Couldn't read {path}: {err}</div>;
+  if (!file) return <div style={{ padding: "40px 0", textAlign: "center", color: C.t3, fontSize: 13 }}>Loading…</div>;
 
+  const isMd = path.endsWith(".md");
   return (
-    <div>
-      <div style={{ fontFamily: mono, fontSize: 11.5, color: C.t3, marginBottom: 12, borderBottom: `1px solid ${C.borderInner}`, paddingBottom: 8 }}>
-        {file.path} · {file.size} B
+    <div style={{ border: `1px solid ${C.border}`, borderRadius: 11, background: "#fff", overflow: "hidden", animation: "gcpop .16s ease-out" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", borderBottom: `1px solid ${C.borderInner}`, background: C.subtle }}>
+        <FileGlyph w={16} />
+        <span style={{ fontFamily: mono, fontSize: 12.5, fontWeight: 600, color: C.ink, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.path}</span>
+        <span style={{ fontFamily: mono, fontSize: 10.5, color: C.t3, flexShrink: 0 }}>{fileLabel(path)} · {file.size} B</span>
+        <CopyPrompt text={refPrompt(file.path, false)} title={`Copy a prompt to read ${file.path}`} style={{ padding: "6px 12px" }} />
       </div>
-      {path.endsWith(".md") ? (
-        <div className="gc-md">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{file.content}</ReactMarkdown>
-        </div>
-      ) : (
-        <pre className="gc-scroll" style={{ margin: 0, fontFamily: mono, fontSize: 12, lineHeight: 1.7, whiteSpace: "pre-wrap", overflow: "auto" }}>{file.content}</pre>
-      )}
+      <div style={{ padding: "18px 20px" }}>
+        {isMd ? (
+          <div className="gc-md">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{file.content}</ReactMarkdown>
+          </div>
+        ) : (
+          <pre className="gc-scroll" style={{ margin: 0, fontFamily: mono, fontSize: 12, lineHeight: 1.7, color: C.ink, whiteSpace: "pre-wrap", overflow: "auto", maxHeight: "70vh" }}>{file.content}</pre>
+        )}
+      </div>
     </div>
   );
 }
@@ -87,19 +111,25 @@ export default function Files() {
     return next;
   });
 
-  if (err) return <p style={{ fontFamily: mono, fontSize: 12, color: C.danger }}>{err}</p>;
-  if (!entries) return <p style={{ fontFamily: mono, fontSize: 11.5, color: C.t3 }}>loading…</p>;
+  if (err) return <div style={{ color: C.danger, fontSize: 13.5, padding: 20 }}>Couldn't load: {err}</div>;
+  if (!entries) return <div style={{ padding: "60px 0", textAlign: "center", color: C.t3, fontSize: 14 }}>Loading…</div>;
 
   return (
-    <div style={{ display: "flex", gap: 32, alignItems: "flex-start", flexWrap: "wrap" }}>
-      <div className="gc-scroll" style={{ flex: "0 1 220px", minWidth: 180, maxHeight: "75vh", overflowY: "auto" }}>
-        <div style={{ ...label, marginBottom: 8 }}>project</div>
-        {roots.map((n) => (
-          <TreeRow key={n.path} node={n} depth={0} selected={selected} open={open} onToggle={toggle} onSelect={setSelected} />
-        ))}
-      </div>
-      <div style={{ flex: "1 1 420px", minWidth: 300 }}>
-        <Viewer path={selected} />
+    <div>
+      <h1 style={{ ...pageTitle, marginBottom: 5 }}>Files</h1>
+      <p style={{ margin: "0 0 20px", color: C.tMuted, fontSize: 13.5, lineHeight: 1.55, maxWidth: 640 }}>
+        The project folder as the agent sees it. Hover a row to copy a prompt that points your agent at that file or folder. <span style={{ fontFamily: mono }}>secrets.env</span> and machine folders never appear here.
+      </p>
+      <div style={{ display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <div className="gc-scroll" style={{ flex: "0 1 280px", minWidth: 230, maxHeight: "72vh", overflowY: "auto", border: `1px solid ${C.border}`, borderRadius: 11, background: C.sidebar, padding: 8 }}>
+          <div style={{ ...sectionLabel, padding: "4px 8px 8px" }}>Project</div>
+          {roots.map((n) => (
+            <TreeRow key={n.path} node={n} depth={0} selected={selected} open={open} onToggle={toggle} onSelect={setSelected} />
+          ))}
+        </div>
+        <div style={{ flex: "1 1 460px", minWidth: 320 }}>
+          <Viewer path={selected} />
+        </div>
       </div>
     </div>
   );

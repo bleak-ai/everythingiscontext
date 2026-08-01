@@ -130,7 +130,7 @@ def test_middleware_records_scrubbed_tool_event(project):
 
 def test_middleware_records_error_and_reraises(project):
     class Msg:
-        name = "overview"
+        name = "read_file"
         arguments = {}
 
     class Ctx:

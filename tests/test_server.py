@@ -42,6 +42,52 @@ def test_write_then_read_roundtrip(project):
     assert server.read_file("modules/notes/index.md") == "hello"
 
 
+def test_list_dir_lists_entries_and_blocks_traversal(project):
+    (project / "modules" / "notes").mkdir(parents=True)
+    (project / "modules" / "notes" / "index.md").write_text("x")
+    out = server.list_dir("modules")
+    assert "notes/" in out
+    out = server.list_dir("modules/notes")
+    assert "index.md" in out
+    assert "outside the project" in server.list_dir("..")
+
+
+def test_list_dir_hides_machine_folders(project):
+    (project / ".git").mkdir()
+    (project / "kept.md").write_text("x")
+    out = server.list_dir(".")
+    assert ".git" not in out
+    assert "kept.md" in out
+
+
+def test_grep_finds_lines_and_respects_glob(project):
+    (project / "modules" / "m").mkdir(parents=True)
+    (project / "modules" / "m" / "index.md").write_text("refund policy\nother\n")
+    (project / "modules" / "m" / "notes.txt").write_text("refund notes\n")
+    out = server.grep("refund")
+    assert "modules/m/index.md:1: refund policy" in out
+    assert "notes.txt" in out
+    out = server.grep("refund", glob="*.md")
+    assert "index.md" in out
+    assert "notes.txt" not in out
+
+
+def test_grep_never_reads_secrets_env(project):
+    (project / "secrets.env").write_text("API_KEY=sk-verysecret\n")
+    out = server.grep("verysecret")
+    assert "sk-verysecret" not in out
+    assert "No matches" in out
+
+
+def test_grep_invalid_regex(project):
+    assert "invalid regex" in server.grep("[unclosed")
+
+
+def test_removed_tools_are_gone():
+    assert not hasattr(server, "list_connections")
+    assert not hasattr(server, "overview")
+
+
 def test_archive_not_scanned_but_reported(project):
     (project / "modules" / "active").mkdir(parents=True)
     (project / "modules" / "active" / "index.md").write_text("x")
@@ -52,9 +98,7 @@ def test_archive_not_scanned_but_reported(project):
     assert "active" in modules and "old" not in modules
 
     assert state.archived(project) == {"modules": ["old"]}
-    overview = server.overview()
-    assert "## Archive" in overview
-    assert "old" in overview
+    assert "archive/" in server.list_dir(".")
 
 
 def test_archive_readable_by_path(project):

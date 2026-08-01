@@ -54,11 +54,11 @@ The accepted tradeoff: something must be running.
 
 ## The context ledger: everything pushed is declared
 
-Every pipe that inserts context into the agent is enumerated in one ledger, computed live from the folder so it cannot go stale. Each pipe is marked `loaded` (pushed at connect), `on demand` (agent pulls it via a visible tool call), `skipped` (nothing to push), or `uncontrolled` (runtime-owned, outside gcontext's view). The ledger appears in `gcontext context`, in `overview()`, after `connect`, and in the dashboard.
+Every pipe that inserts context into the agent is enumerated in one ledger, computed live from the folder so it cannot go stale. Each pipe is marked `loaded` (pushed at connect), `on demand` (agent pulls it via a visible tool call), `skipped` (nothing to push), or `uncontrolled` (runtime-owned, outside gcontext's view). The ledger appears in `gcontext context`, after `connect`, and in the dashboard.
 
 The one thing gcontext pushes at connect is `instructions.md`, through the MCP handshake's `instructions` field, declared as ledger pipe G0. This is the design's answer to "what does the agent receive when it attaches": one file, in the folder, versioned with git, and nothing else. Edit it and you have edited what every future session starts with.
 
-This position was reached in two steps. The handshake push was first rejected outright, on the argument that content arriving through a side channel is invisible in the conversation. Living with the alternative showed the real cost: the agent started blind, had to be told (via `overview()`) to read its own instructions, and a runtime that never asked never saw them. The rejection was aimed at the wrong target. The problem was never pushing at connect; it was pushing without declaring. So the invariant is: everything pushed is declared in the ledger, and everything declared is a file you control.
+This position was reached in two steps. The handshake push was first rejected outright, on the argument that content arriving through a side channel is invisible in the conversation. Living with the alternative showed the real cost: the agent started blind, had to be told to read its own instructions, and a runtime that never asked never saw them. The rejection was aimed at the wrong target. The problem was never pushing at connect; it was pushing without declaring. So the invariant is: everything pushed is declared in the ledger, and everything declared is a file you control.
 
 The ledger is also honest about its limits. When a runtime keeps pipes gcontext cannot close (its own system prompt, its config files, other MCP servers), the ledger marks them UNCONTROLLED instead of pretending the session is cleaner than it is.
 

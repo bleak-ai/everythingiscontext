@@ -46,7 +46,7 @@ my-agent/
 
 Markdown holds the context, YAML holds the config. Edit any of it with a text editor; the server reads the files on demand, so changes apply immediately. Two exceptions load at server start and need a restart to pick up edits: `instructions.md` (pushed in the MCP handshake) and command files.
 
-Connected clients get six tools: `overview`, `read_file`, `write_file`, `list_dir`, `grep`, `run_script`.
+Connected clients get five tools: `read_file`, `write_file`, `list_dir`, `grep`, `run_script`.
 
 `run_script` runs either ad-hoc code or a saved script by path (`scripts/` folders hold proven procedures, so they are reused instead of rewritten). Files under `connections/*/commands/` and `modules/*/commands/` register as MCP prompts, which Claude Code shows as slash commands; see "Commands" below.
 

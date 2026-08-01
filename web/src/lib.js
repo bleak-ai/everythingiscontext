@@ -1,4 +1,4 @@
-// The whole data seam: every view reads the local server's /api/* routes.
+// The whole data seam: every page reads the local server's /api/* routes.
 // The dashboard is read-only; the agent (via MCP) is what changes the project.
 
 export async function getJSON(path) {
@@ -20,6 +20,19 @@ export function copyText(text) {
   document.execCommand("copy");
   ta.remove();
 }
+
+// Agent-ready prompts for a file or folder reference. The copied text names
+// the gcontext MCP server, so any agent can locate the path without guessing
+// which server or tool it belongs to.
+export const filePrompt = (path) =>
+  `From the gcontext MCP server, read "${path}" and use it as context for this task.`;
+export const folderPrompt = (path) =>
+  `From the gcontext MCP server, explore the folder "${path.replace(/\/$/, "")}/": check its files and read the relevant ones.`;
+export const refPrompt = (path, isDir) => (isDir ? folderPrompt(path) : filePrompt(path));
+
+// File-card label: "notes.md" -> "md", extensionless -> "file". Dotfiles (".env")
+// stay "file" (lastIndexOf > 0), so the label never repeats the whole name.
+export const fileLabel = (name) => { const i = (name || "").lastIndexOf("."); return i > 0 ? name.slice(i + 1).toLowerCase() : "file"; };
 
 // "3h ago" / "2d ago": the one relative-time format for last-seen surfaces.
 export const relSeen = (iso) => {

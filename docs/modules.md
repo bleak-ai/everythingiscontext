@@ -50,13 +50,13 @@ There is no enforced schema beyond `index.md`. Different modules have different 
 
 1. Download the module folder (or copy it)
 2. Drop it into `modules/` in your agent folder
-3. That's it. The agent discovers it via `overview()` and can read all its files.
+3. That's it. The agent discovers it with `list_dir("modules")` and can read all its files.
 
 No installation step, no config to edit, no dependencies to resolve. It's just files.
 
 ## How the agent interacts with a module
 
-The agent sees modules listed in `overview()`. When a task matches a module's purpose, the agent:
+The agent sees modules with `list_dir("modules")`. When a task matches a module's purpose, the agent:
 
 1. Reads `index.md` to understand what the module does
 2. Reads any additional files (steps, playbooks, references)

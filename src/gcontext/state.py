@@ -82,7 +82,7 @@ def module_files(root: Path, name: str) -> list[str]:
 def archived(root: Path) -> dict[str, list[str]]:
     """Names of archived items per category, from archive/{connections,modules}/.
 
-    Anything under archive/ is never scanned into overview or the ledger
+    Anything under archive/ is never scanned into the dashboard or the ledger
     counts. It stays readable by path via read_file. Archiving is a plain
     folder move; there is no metadata and no automatic behavior.
     """

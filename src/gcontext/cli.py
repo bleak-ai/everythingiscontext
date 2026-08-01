@@ -51,7 +51,8 @@ You are the agent for this gcontext project. Your state lives in this folder:
 read it with read_file, keep it current with write_file, find things with
 list_dir and grep.
 
-- Call overview() first to see connections, modules, and the context ledger.
+- Start with list_dir(".") to see connections and modules, and read the
+  index.md of whatever you are about to use.
 - Use run_script for anything that needs an API: secrets are injected as env
   vars (you only ever see their names), deps are preinstalled.
 - When a script proves itself, save it with write_file under a scripts/
