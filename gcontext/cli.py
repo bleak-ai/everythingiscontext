@@ -65,6 +65,31 @@ secrets.env
 .venv/
 """
 
+INIT_README = """\
+# {name}
+
+This folder is the state of a [gcontext](https://pypi.org/project/gcontext-ai/)
+agent: everything it knows lives here as plain files.
+
+Run it:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # once: uv, which gcontext needs at runtime
+uv tool install gcontext-ai                       # once
+gcontext up .                 # from this folder (or: gcontext up <path> from anywhere)
+```
+
+The server prints a URL and the one-line command to connect your harness
+(Claude Code, Claude Desktop, Codex, Cursor). The harness does the reasoning;
+this folder is the memory.
+
+What's here: `agent.md` is the agent's definition, pushed to every harness at
+connect. `connections/` holds the services it can use, `modules/` its knowledge
+by topic, `archive/` retired state. `secrets.env` holds secret values; it is
+gitignored and never leaves this machine, so after cloning, recreate it from
+the NAMEs each connection.yaml declares.
+"""
+
 def cmd_init(args):
     target = Path(args.directory).resolve()
     if target.exists() and any(target.iterdir()):
@@ -74,6 +99,7 @@ def cmd_init(args):
     name = target.name
     files = {
         "gcontext.yaml": INIT_GCONTEXT_YAML.format(name=name),
+        "README.md": INIT_README.format(name=name),
         "agent.md": INIT_INSTRUCTIONS,
         "secrets.env": INIT_SECRETS,
         ".gitignore": INIT_AGENT_GITIGNORE,
@@ -90,14 +116,11 @@ def cmd_init(args):
     print()
     print("The folder IS your agent's state: version it with git, edit it freely.")
     print()
+    pad = min(max(len(f"gcontext up {args.directory}"), len(f"/mcp__{name}__setup")) + 4, 44)
     print("Next steps:")
-    print(f"  1. gcontext up {args.directory}          start the server")
-    print(f"  2. gcontext connect claude        attach a harness (or: desktop, codex, cursor)")
-    print()
-    print("Give the agent its first connection (any service with an API):")
-    print(f"  {args.directory}/connections/<service>/connection.yaml   secret NAMEs + Python deps")
-    print(f"  {args.directory}/connections/<service>/index.md          how to use the API, in your words")
-    print(f"  {args.directory}/secrets.env                             secret VALUES, stays on this machine")
+    print(f"  1. {f'gcontext up {args.directory}':<{pad}}  start the server")
+    print(f"  2. {'connect your harness':<{pad}}  the up banner prints the exact command per harness")
+    print(f"  3. {f'/mcp__{name}__setup':<{pad}}  in the harness: describe what the agent should do, it builds the rest")
     print()
     print(f"{DIM}See what reaches the agent, anytime: gcontext context {args.directory}{RESET}")
 

@@ -8,6 +8,14 @@ Runtimes forget everything between sessions; the folder doesn't. Because the sta
 
 ## Install
 
+gcontext needs [uv](https://docs.astral.sh/uv/): it installs the tool and manages each agent's script environment at runtime. No uv yet? One line, no prerequisites (it brings its own Python if needed):
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # or: brew install uv
+```
+
+Then:
+
 ```bash
 uv tool install gcontext-ai
 ```
