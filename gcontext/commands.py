@@ -123,6 +123,17 @@ def discover(root: Path) -> list[Path]:
     )
 
 
+_FRAMEWORK_SKIP = {"framework-instructions", "resources", "README"}
+
+
+def discover_framework_prompts() -> list[Path]:
+    """Framework-shipped prompt files (same filter as register_framework_prompts)."""
+    prompts_dir = Path(__file__).parent / "prompts"
+    return sorted(
+        p for p in prompts_dir.glob("*.md") if p.stem not in _FRAMEWORK_SKIP
+    )
+
+
 def register_framework_prompts(mcp) -> int:
     """Register the framework's own prompts, shipped in the package.
 

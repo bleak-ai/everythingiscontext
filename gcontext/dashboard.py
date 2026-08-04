@@ -93,6 +93,28 @@ async def api_modules(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
+def _command_entry(path: Path, owner: str, rel: str, kind: str) -> dict:
+    entry = {"owner": owner, "name": f"{owner}__{path.stem}", "kind": kind, "path": rel}
+    try:
+        text = path.read_text(encoding="utf-8")
+        if path.suffix == ".md":
+            meta, _ = commands_mod.parse_command(text)
+        else:
+            meta = commands_mod.parse_script_command(text)
+        entry["description"] = meta.get("description", "")
+        entry["args"] = [
+            {
+                "name": p.get("name", "?"),
+                "description": p.get("description", ""),
+                "required": bool(p.get("required", False)),
+            }
+            for p in (meta.get("parameters") or [])
+        ]
+    except (ValueError, KeyError, yaml.YAMLError) as e:
+        entry["error"] = str(e)
+    return entry
+
+
 @mcp.custom_route("/api/commands", methods=["GET"])
 async def api_commands(request: Request) -> JSONResponse:
     root = _root()
@@ -100,29 +122,10 @@ async def api_commands(request: Request) -> JSONResponse:
     for path in commands_mod.discover(root):
         rel = str(path.relative_to(root))
         owner = path.parent.parent.name
-        entry = {
-            "owner": owner,
-            "name": f"{owner}__{path.stem}",
-            "kind": path.suffix.lstrip("."),
-            "path": rel,
-        }
-        try:
-            text = path.read_text(encoding="utf-8")
-            if path.suffix == ".md":
-                meta, _ = commands_mod.parse_command(text)
-            else:
-                meta = commands_mod.parse_script_command(text)
-            entry["description"] = meta.get("description", "")
-            entry["args"] = [
-                {
-                    "name": p.get("name", "?"),
-                    "description": p.get("description", ""),
-                    "required": bool(p.get("required", False)),
-                }
-                for p in (meta.get("parameters") or [])
-            ]
-        except (ValueError, KeyError, yaml.YAMLError) as e:
-            entry["error"] = str(e)
+        result.append(_command_entry(path, owner, rel, path.suffix.lstrip(".")))
+    for path in commands_mod.discover_framework_prompts():
+        entry = _command_entry(path, "framework", f"gcontext/prompts/{path.name}", "md")
+        entry["name"] = path.stem
         result.append(entry)
     return JSONResponse(result)
 

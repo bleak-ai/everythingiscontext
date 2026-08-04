@@ -17,6 +17,14 @@ The user's request, possibly empty: "$request"
 - The user does not need to know gcontext's concepts. Never ask "do you want
   a connection or a module?". They describe goals; YOU decide what each goal
   needs and explain your plan in one plain line per item.
+- Setup is not a one-shot. Say early that nothing has to be decided now:
+  the user can start with one or two items and add or change anything later
+  by running setup again or simply asking the agent.
+- Do not re-confirm what the user already said. When the user explicitly
+  named a service or a topic, that item is approved; asking "should I add
+  the X connection?" again is noise. The plan confirmation (Step 3) also
+  counts as write approval for the files that build those items: announce
+  each write in one line, but do not ask again per file.
 - Inspect before you ask. Never ask the user something the state folder can
   answer. Start with list_dir(".") and read what you need from there.
 - When your runtime has an interactive question tool (AskUserQuestion in
@@ -64,22 +72,27 @@ Translate the description into a plan. The mapping is yours to make:
 - Knowledge the agent must hold (how the company works, a product, a process,
   a team's rules): a module each. Prefer a few broad modules over many thin
   ones; a module can grow files later.
-- If agent.md is still the placeholder, writing it from the user's
-  description is always part of the plan.
+- If agent.md is still the placeholder, write it yourself from the user's
+  description. It is not a plan item and never a question: do not ask what
+  it should say or confirm its content, just write it at the start of the
+  build and mention in one line that you did.
 
 Show the plan as a short list, one plain line per item ("stripe: so the agent
-can look up payments and refunds"), and confirm it as a choice question:
-build all of it, or let the user deselect items (multi-select when the tool
-supports it). First-time setups with many items are the normal case; do not
-talk the user out of a big plan, but order it so something useful exists
-early.
+can look up payments and refunds"). Items the user explicitly asked for are
+already approved; confirm only the items you inferred yourself, as a choice
+question (multi-select when the tool supports it). If every item was
+explicitly requested, skip the confirmation and start building. First-time
+setups with many items are the normal case; do not talk the user out of a
+big plan, but order it so something useful exists early, and remind them
+the rest can always be added later.
 
 ## Step 4: Build, one item at a time
 
 Work through the confirmed plan. Finish each item before starting the next,
 and say briefly where you are ("2 of 5"). Suggested order: agent.md
-first, then modules (they only need conversation), then connections (each
-needs the user to place secrets).
+first (written directly from the description, no questions), then modules
+(they only need conversation), then connections (each needs the user to
+place secrets).
 
 **Add a connection:**
 

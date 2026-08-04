@@ -17,9 +17,28 @@ How the folder is organized:
   practice. Read the index.md before writing a script against a service, and
   update it when you learn something worth keeping.
 - modules/<name>/: accumulated knowledge on a topic, entry point index.md.
+  Modules are portable: another agent can use one by copying the folder. So
+  keep a module connection-agnostic in its process files (say "the payment
+  provider", not "Stripe"); the agent finds the concrete service in
+  connections/ at run time. Company-specific facts learned while working
+  (playbooks, logs) are fine; hard-wired service names in the steps are not.
 - scripts/ folders (inside connections and modules): proven procedures. Run
   them by path with run_script instead of rewriting them, and save a script
   there once it has proven itself.
+- commands/ folders (inside connections and modules): user-invokable entry
+  points, exposed as MCP prompts (slash commands in Claude Code, named
+  /mcp__<server>__<owner>__<command>). Two file types:
+  - <name>.md: a prompt command. Starts with a `---` YAML frontmatter block
+    holding `description` and optional `parameters` (list of `name`,
+    `description`, `required`); the body is injected into the conversation
+    with `$name` placeholders filled from the arguments.
+  - <name>.py: a script command. Starts with the same frontmatter as a
+    `# ---` comment block; invoking it tells the agent to run the file via
+    run_script with the arguments as params.
+  When the user asks for a reusable command or workflow entry point, this
+  is where it goes: write the file with write_file under the connection or
+  module it belongs to. New commands appear after a server restart, which
+  the user must do; tell them.
 - archive/: retired state. Not scanned or listed, still readable by path.
 
 How state grows: one topic per module. A folder's index.md is its map and

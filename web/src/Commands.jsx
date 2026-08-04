@@ -57,7 +57,7 @@ export default function Commands() {
     <div>
       <h1 style={{ ...pageTitle, marginBottom: 5 }}>Commands</h1>
       <p style={{ margin: "0 0 20px", color: C.tMuted, fontSize: 13.5, lineHeight: 1.55, maxWidth: 640 }}>
-        Files under <span style={{ fontFamily: mono }}>commands/</span> folders, served as MCP prompts. New files appear after a server restart.
+        All MCP prompts: project commands from <span style={{ fontFamily: mono }}>commands/</span> folders and built-in framework prompts, grouped by owner.
       </p>
       {cmds.length === 0 ? (
         <EmptyState>
@@ -69,9 +69,22 @@ export default function Commands() {
       ) : (
         <>
           <div style={{ ...sectionLabel, marginBottom: 11 }}>Commands ({cmds.length})</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 13 }}>
-            {cmds.map((c) => <CommandCard key={c.path} cmd={c} />)}
-          </div>
+          {(() => {
+            const groups = {};
+            cmds.forEach((c) => { (groups[c.owner] = groups[c.owner] || []).push(c); });
+            const owners = Object.keys(groups).sort((a, b) => a === "framework" ? 1 : b === "framework" ? -1 : a.localeCompare(b));
+            return owners.map((owner) => (
+              <div key={owner} style={{ marginBottom: 22 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 600, color: C.ink, textTransform: "uppercase", letterSpacing: "0.04em" }}>{owner}</span>
+                  <span style={{ fontSize: 11, color: C.t3 }}>({groups[owner].length})</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 13 }}>
+                  {groups[owner].map((c) => <CommandCard key={c.path} cmd={c} />)}
+                </div>
+              </div>
+            ));
+          })()}
         </>
       )}
     </div>

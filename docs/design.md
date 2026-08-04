@@ -14,7 +14,7 @@ This principle removed two features in sequence. An early version shipped a ~230
 
 There is no database, no manifest system, no type registry. An agent is a directory: markdown for context, YAML for config, an env file for secret values. If you can create a folder and put a markdown file in it, you can extend the agent. The whole thing versions with git, which means agent state gets diffs, history, review, and rollback for free.
 
-The predecessor of this design had typed modules (integration / task / workflow) with manifest files. It was rejected: the classification created decision paralysis ("is this a task or a workflow?") and the manifests had too many fields. A folder is a folder. Progressive complexity instead: start with markdown (knowledge), add a `connection.yaml` when you need secrets (integration), add a `flow.yaml` when work has steps (process).
+The predecessor of this design had typed modules (integration / task / workflow) with manifest files. It was rejected: the classification created decision paralysis ("is this a task or a workflow?") and the manifests had too many fields. A folder is a folder. Progressive complexity instead: start with markdown (knowledge), add a `connection.yaml` when you need secrets (integration), add scripts and commands when procedures prove themselves.
 
 ## Config is YAML, content is markdown, behavior is scripts
 
