@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { getJSON, fileRef } from "./lib.js";
+import { getJSON, fileRef, commandInvocation } from "./lib.js";
 import { C, mono, Chip, cardBase, cardHover, pageTitle, sectionLabel, EmptyState, useHover } from "./ui.jsx";
 import CopyPrompt from "./Copy.jsx";
 
 // Commands = files under connections/*/commands/ and modules/*/commands/,
 // registered as MCP prompts. In Claude Code each one is a slash command.
 
-const invocationFor = (name) => `/mcp__gcontext__${name}`;
+const invocationFor = (name) => commandInvocation(name);
 
 function CommandCard({ cmd }) {
   const [h, hp] = useHover();

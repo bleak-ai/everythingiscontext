@@ -30,6 +30,7 @@ export const setServerName = (name) => { if (name) serverName = name; };
 export const fileRef = (path) => `@${serverName}:gcontext://${path}`;
 export const folderRef = (path) => `@${serverName}:gcontext://${path.replace(/\/$/, "")}/`;
 export const refPrompt = (path, isDir) => (isDir ? folderRef(path) : fileRef(path));
+export const commandInvocation = (name) => `/mcp__${serverName}__${name}`;
 
 // File-card label: "notes.md" -> "md", extensionless -> "file". Dotfiles (".env")
 // stay "file" (lastIndexOf > 0), so the label never repeats the whole name.
