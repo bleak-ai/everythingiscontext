@@ -164,6 +164,8 @@ Developing the dashboard itself needs node: `make web-dev` runs a Vite dev serve
 - [examples/ops-agent](examples/ops-agent): a complete agent folder with connections, modules, a command, and an archived module
 - [docs/design.md](docs/design.md): why gcontext is built this way, decision by decision
 - [docs/modules.md](docs/modules.md): writing portable, shareable modules
+- [docs/workflows.md](docs/workflows.md): the workflow template standard, the contract for distributable context-based workflows
+- [docs/share-workflow.md](docs/share-workflow.md): instructions an author's agent follows to turn a lived workflow into a shareable template
 
 ## Scope
 
