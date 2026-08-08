@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import socket
 import sys
 import urllib.error
@@ -22,6 +23,7 @@ YELLOW = "\033[33m"
 RESET = "\033[0m"
 
 DEFAULT_PORT = 4242
+DEFAULT_API_URL = "https://api.gcontext.ai"
 
 STATUS_COLOR = {
     "loaded": GREEN,
@@ -389,6 +391,83 @@ def cmd_context(args):
     print_ledger(project_dir)
 
 
+def fetch_workflow(workflow_id: str) -> dict:
+    """Fetch one approved template bundle from the workflows API. Exits on failure."""
+    base = os.environ.get("GCONTEXT_API_URL", DEFAULT_API_URL).rstrip("/")
+    url = f"{base}/api/workflows/{workflow_id}"
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            print(f"Error: no published workflow with id '{workflow_id}'.", file=sys.stderr)
+            print("Browse the directory at https://gcontext.ai/workflows/", file=sys.stderr)
+        else:
+            print(f"Error: the workflows API answered {e.code} for {url}.", file=sys.stderr)
+        sys.exit(1)
+    except (urllib.error.URLError, OSError, ValueError):
+        print(f"Error: could not reach the workflows API at {url}.", file=sys.stderr)
+        sys.exit(1)
+
+
+def validate_bundle(files) -> dict:
+    """Check paths and the index.md manifest; return the parsed frontmatter.
+
+    Raises ValueError on any problem. Runs entirely in memory so a bad
+    bundle never leaves files behind.
+    """
+    from pathlib import PurePosixPath
+
+    from .commands import parse_command
+
+    if not isinstance(files, list) or not files:
+        raise ValueError("the bundle has no files")
+    for f in files:
+        path = f.get("path") or ""
+        parts = PurePosixPath(path).parts
+        if not path or path.startswith("/") or "\\" in path or ".." in parts:
+            raise ValueError(f"unsafe file path in bundle: {path!r}")
+    index = next((f for f in files if f["path"] == "index.md"), None)
+    if index is None:
+        raise ValueError("the bundle has no index.md")
+    try:
+        meta, _ = parse_command(index["content"])
+    except ValueError as e:
+        raise ValueError(f"index.md frontmatter: {e}")
+    for field in ("id", "name", "description"):
+        if not meta.get(field):
+            raise ValueError(f"index.md frontmatter is missing '{field}'")
+    return meta
+
+
+def cmd_add(args):
+    project_dir = find_project_dir(args.project)
+    bundle = fetch_workflow(args.workflow_id)
+    try:
+        meta = validate_bundle(bundle.get("files"))
+    except ValueError as e:
+        print(f"Error: invalid workflow bundle: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    module_dir = project_dir / "modules" / meta["id"]
+    if module_dir.exists():
+        print(f"Error: module '{meta['id']}' already exists at {module_dir}.", file=sys.stderr)
+        print("Installs are snapshots: your copy is personalized and is never overwritten.", file=sys.stderr)
+        sys.exit(1)
+
+    for f in bundle["files"]:
+        dest = module_dir / f["path"]
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(f["content"])
+
+    rel = f"modules/{meta['id']}"
+    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} installed {meta['name']} ({len(bundle['files'])} files) at {rel}/")
+    print()
+    print("Next step: personalize it. Tell your agent to run the setup in")
+    print(f"  {rel}/commands/setup.md")
+    print(f"{DIM}(Re)start the server and the setup is also an MCP prompt: a slash command in Claude Code.{RESET}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="gcontext",
@@ -423,6 +502,10 @@ def main():
     context_parser = subparsers.add_parser("context", help="Show the context ledger: every pipe into the agent, per mode")
     add_common(context_parser)
 
+    add_parser = subparsers.add_parser("add", help="Install a published workflow from the marketplace into modules/")
+    add_parser.add_argument("workflow_id", help="Workflow id from the directory (e.g. coolify-ops)")
+    add_parser.add_argument("project", nargs="?", help="Path to gcontext project directory")
+
     args = parser.parse_args()
 
     commands = {
@@ -431,6 +514,7 @@ def main():
         "status": cmd_status,
         "connect": cmd_connect,
         "context": cmd_context,
+        "add": cmd_add,
     }
     if args.command in commands:
         commands[args.command](args)
