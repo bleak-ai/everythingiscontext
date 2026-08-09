@@ -1,6 +1,6 @@
 # Workflows
 
-A context-based workflow is a module with a fixed shape. It is a series of steps the agent executes with judgment, where every run leaves a persistent trace on disk. The workflow remembers what happened last run, accumulates knowledge, and gets better over time. A skill or prompt runs and forgets; a workflow holds state.
+A context-based workflow is a module with a fixed shape. Every workflow lives in `modules/` as a module, but not every module is a workflow: a module is any folder of files that holds accumulated knowledge on a topic; a workflow is a module that follows the specific structure defined here (frontmatter manifest, steps/, runs/). It is a series of steps the agent executes with judgment, where every run leaves a persistent trace on disk. The workflow remembers what happened last run, accumulates knowledge, and gets better over time. A skill or prompt runs and forgets; a workflow holds state.
 
 This document is the template spec: the contract a workflow folder must follow to be distributable. The CLI (`gcontext add`), the site directory, and the authoring tooling all build against it. It is one standard for all workflows; there are no per-domain variants.
 

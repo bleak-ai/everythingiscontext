@@ -338,7 +338,8 @@ def test_state_files_are_resources(project):
             return listed, file[0].text, folder[0].text, archived[0].text, blocked[0].text
 
     listed, file_text, folder_text, archived_text, blocked_text = asyncio.run(go())
-    assert "gcontext://modules/m/index.md" in listed
+    assert any(u.startswith("agent://") and u.endswith("/modules/m") for u in listed)
+    assert any(u.startswith("agent://") and "modules" not in u and "connections" not in u for u in listed)
     assert not any("secrets.env" in u for u in listed)
     assert not any(u.startswith("gcontext://archive/") for u in listed)
     assert file_text == "topic notes"

@@ -154,18 +154,41 @@ class ConnectionTracker(Middleware):
         return await call_next(context)
 
     async def on_list_resources(self, context, call_next):
-        """The resource list is the state folder, scanned live: every listable
-        file at gcontext://<path>, so runtimes can offer them for attachment."""
-        result = await call_next(context)
-        for rel in fs.walk_files(PROJECT_DIR):
-            mime = "text/markdown" if rel.endswith(".md") else "text/plain"
-            result.append(Resource(uri=f"gcontext://{rel}", name=rel, mime_type=mime))
+        """Curated resource list: the agent entry point plus each module and
+        connection.  Every file stays readable via the gcontext://{path*}
+        template; only the entry points appear as suggestions."""
+        await call_next(context)
+        result = []
+        config = state.load_gcontext_yaml(PROJECT_DIR)
+        agent_name = config.get("name", PROJECT_DIR.name)
+        result.append(Resource(
+            uri=f"agent://{agent_name}",
+            name=agent_name,
+            mime_type="text/markdown",
+        ))
+        for name in state.discover_modules(PROJECT_DIR):
+            result.append(Resource(
+                uri=f"agent://{agent_name}/modules/{name}",
+                name=f"modules / {name}",
+                mime_type="text/markdown",
+            ))
+        for name in state.load_connections(PROJECT_DIR):
+            result.append(Resource(
+                uri=f"agent://{agent_name}/connections/{name}",
+                name=f"connections / {name}",
+                mime_type="text/markdown",
+            ))
         return result
 
     async def on_read_resource(self, context, call_next):
+        from fastmcp.resources.base import ResourceResult
         uri = str(getattr(context.message, "uri", "?"))
         start = time.perf_counter()
-        result = await call_next(context)
+        text = _resolve_resource_uri(uri)
+        if text is not None:
+            result = ResourceResult(text)
+        else:
+            result = await call_next(context)
         record_event(_session_id(context), "resource", "resource", detail=uri,
                      duration_ms=round((time.perf_counter() - start) * 1000))
         return result
@@ -221,16 +244,58 @@ def load_instructions() -> tuple[int, int]:
     return len(base.splitlines()), len(text.splitlines())
 
 
-@mcp.resource("gcontext://{path*}",
-              description=(_PROMPTS_DIR / "resources.md").read_text().strip())
-def state_resource(path: str) -> str:
-    rel = path.rstrip("/")
-    target, error = fs.resolve_path(PROJECT_DIR, rel)
-    if error:
-        return f"Error: {error}."
-    if target.is_dir():
-        return fs.list_dir(PROJECT_DIR, rel or ".")
-    return fs.read_file(PROJECT_DIR, rel)
+def _resolve_resource_uri(uri: str) -> str | None:
+    """Resolve a resource URI to text content, or None if unrecognised."""
+    if uri.startswith("agent://"):
+        path = uri[len("agent://"):].rstrip("/")
+        parts = path.split("/", 1)
+        rel = parts[1] if len(parts) > 1 else ""
+        if not rel:
+            return _ask_resource()
+        target, error = fs.resolve_path(PROJECT_DIR, rel)
+        if error:
+            return f"Error: {error}."
+        if target.is_dir():
+            index = target / "index.md"
+            if index.is_file():
+                return fs.read_file(PROJECT_DIR, f"{rel}/index.md")
+            return fs.list_dir(PROJECT_DIR, rel)
+        return fs.read_file(PROJECT_DIR, rel)
+    if uri.startswith("gcontext://"):
+        rel = uri[len("gcontext://"):].rstrip("/")
+        target, error = fs.resolve_path(PROJECT_DIR, rel)
+        if error:
+            return f"Error: {error}."
+        if target.is_dir():
+            return fs.list_dir(PROJECT_DIR, rel or ".")
+        return fs.read_file(PROJECT_DIR, rel)
+    return None
+
+
+def _ask_resource() -> str:
+    """Build the 'ask' resource: agent.md plus a map of modules and connections."""
+    config = state.load_gcontext_yaml(PROJECT_DIR)
+    agent_name = config.get("name", PROJECT_DIR.name)
+    parts = [f"# {agent_name}\n"]
+    agent_md = PROJECT_DIR / "agent.md"
+    if agent_md.exists():
+        parts.append(agent_md.read_text().strip())
+        parts.append("")
+    modules = state.discover_modules(PROJECT_DIR)
+    if modules:
+        parts.append("## Modules")
+        for name, manifest in modules.items():
+            desc = f" - {manifest.description}" if manifest.description else ""
+            parts.append(f"- {name}{desc}")
+        parts.append("")
+    connections = state.load_connections(PROJECT_DIR)
+    if connections:
+        parts.append("## Connections")
+        for name, manifest in connections.items():
+            desc = f" - {manifest.description}" if manifest.description else ""
+            parts.append(f"- {name}{desc}")
+        parts.append("")
+    return "\n".join(parts)
 
 
 # output_schema=None on every tool: with a schema, FastMCP wraps the string
