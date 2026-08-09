@@ -231,6 +231,26 @@ def test_admin_delete_not_found(client, admin):
     assert resp.status_code == 404
 
 
+def test_admin_publish_rejected(client, admin):
+    submit(client)
+    client.post("/api/moderation/workflows/demo-flow/reject", headers=admin)
+
+    resp = client.post("/api/admin/workflows/demo-flow/publish", headers=admin)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "approved"
+
+    public = client.get("/api/workflows/demo-flow")
+    assert public.status_code == 200
+    assert public.json()["name"] == "Demo Flow"
+
+
+def test_admin_publish_not_rejected_404(client, admin):
+    submit(client)
+    client.post("/api/moderation/workflows/demo-flow/approve", headers=admin)
+    resp = client.post("/api/admin/workflows/demo-flow/publish", headers=admin)
+    assert resp.status_code == 404
+
+
 def test_admin_delete_requires_token(client):
     assert client.delete("/api/admin/workflows/x").status_code == 401
 

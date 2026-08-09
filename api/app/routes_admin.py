@@ -1,9 +1,11 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from .db import get_session
-from .models import Template
+from .models import APPROVED, REJECTED, Template
 from .routes_moderation import require_admin
 from .schemas import AdminUpdateIn, AdminWorkflowOut
 
@@ -53,6 +55,19 @@ def update_metadata(
     session.commit()
     session.refresh(template)
     return _to_out(template)
+
+
+@router.post("/workflows/{workflow_id}/publish")
+def publish_workflow(workflow_id: str, session: Session = Depends(get_session)):
+    template = session.scalars(
+        select(Template).where(Template.id == workflow_id, Template.status == REJECTED)
+    ).first()
+    if template is None:
+        raise HTTPException(status_code=404, detail="no rejected workflow with this id")
+    template.status = APPROVED
+    template.reviewed_at = datetime.now(timezone.utc)
+    session.commit()
+    return {"id": workflow_id, "status": APPROVED}
 
 
 @router.delete("/workflows/{workflow_id}")
