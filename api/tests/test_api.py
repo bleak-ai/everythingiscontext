@@ -141,6 +141,100 @@ def test_invalid_bundles_rejected(client):
     assert bad_slug.status_code == 422
 
 
+def test_admin_list_all_statuses(client, admin):
+    submit(client)
+    client.post("/api/moderation/workflows/demo-flow/approve", headers=admin)
+    alt = INDEX_MD.replace("demo-flow", "alt-flow").replace("Demo Flow", "Alt Flow")
+    client.post("/api/workflows", json=bundle(index_content=alt))
+    client.post("/api/moderation/workflows/alt-flow/reject", headers=admin)
+
+    resp = client.get("/api/admin/workflows", headers=admin)
+    assert resp.status_code == 200
+    items = resp.json()
+    by_id = {w["id"]: w for w in items}
+    assert by_id["demo-flow"]["status"] == "approved"
+    assert by_id["demo-flow"]["file_count"] == 5
+    assert by_id["alt-flow"]["status"] == "rejected"
+
+
+def test_admin_list_requires_token(client):
+    assert client.get("/api/admin/workflows").status_code == 401
+    bad = {"Authorization": "Bearer wrong"}
+    assert client.get("/api/admin/workflows", headers=bad).status_code == 401
+
+
+def test_admin_update_metadata(client, admin):
+    submit(client)
+    client.post("/api/moderation/workflows/demo-flow/approve", headers=admin)
+
+    resp = client.patch(
+        "/api/admin/workflows/demo-flow",
+        json={"name": "Updated Name", "tags": ["new"]},
+        headers=admin,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "Updated Name"
+    assert resp.json()["tags"] == ["new"]
+
+    public = client.get("/api/workflows/demo-flow").json()
+    assert public["name"] == "Updated Name"
+    assert public["tags"] == ["new"]
+
+
+def test_admin_update_partial(client, admin):
+    submit(client)
+    client.post("/api/moderation/workflows/demo-flow/approve", headers=admin)
+
+    resp = client.patch(
+        "/api/admin/workflows/demo-flow",
+        json={"name": "New Name"},
+        headers=admin,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "New Name"
+    assert resp.json()["description"] == "A demo workflow used by the tests."
+    assert resp.json()["tags"] == ["demo", "testing"]
+
+
+def test_admin_update_not_found(client, admin):
+    resp = client.patch(
+        "/api/admin/workflows/nonexistent",
+        json={"name": "X"},
+        headers=admin,
+    )
+    assert resp.status_code == 404
+
+
+def test_admin_delete(client, admin):
+    submit(client)
+    client.post("/api/moderation/workflows/demo-flow/approve", headers=admin)
+
+    resp = client.delete("/api/admin/workflows/demo-flow", headers=admin)
+    assert resp.status_code == 200
+    assert resp.json()["deleted"] == "demo-flow"
+
+    assert client.get("/api/workflows/demo-flow").status_code == 404
+    assert client.get("/api/admin/workflows", headers=admin).json() == []
+
+
+def test_admin_delete_rejected(client, admin):
+    submit(client)
+    client.post("/api/moderation/workflows/demo-flow/reject", headers=admin)
+
+    resp = client.delete("/api/admin/workflows/demo-flow", headers=admin)
+    assert resp.status_code == 200
+    assert client.get("/api/admin/workflows", headers=admin).json() == []
+
+
+def test_admin_delete_not_found(client, admin):
+    resp = client.delete("/api/admin/workflows/nonexistent", headers=admin)
+    assert resp.status_code == 404
+
+
+def test_admin_delete_requires_token(client):
+    assert client.delete("/api/admin/workflows/x").status_code == 401
+
+
 def test_path_traversal_rejected(client):
     evil = bundle(extra=[{"path": "../outside.md", "content": "x"}])
     assert client.post("/api/workflows", json=evil).status_code == 422
