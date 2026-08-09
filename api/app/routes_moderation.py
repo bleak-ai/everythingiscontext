@@ -76,3 +76,16 @@ def reject(workflow_id: str, session: Session = Depends(get_session)):
     template.reviewed_at = datetime.now(timezone.utc)
     session.commit()
     return {"id": workflow_id, "status": REJECTED}
+
+
+@router.post("/{workflow_id}/unpublish", dependencies=[Depends(require_admin)])
+def unpublish(workflow_id: str, session: Session = Depends(get_session)):
+    template = session.scalars(
+        select(Template).where(Template.id == workflow_id, Template.status == APPROVED)
+    ).first()
+    if template is None:
+        raise HTTPException(status_code=404, detail="no approved workflow with this id")
+    template.status = REJECTED
+    template.reviewed_at = datetime.now(timezone.utc)
+    session.commit()
+    return {"id": workflow_id, "status": REJECTED}
