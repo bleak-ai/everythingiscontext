@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, selectinload
 from .db import get_session
 from .manifest import BundleError, parse_manifest, validate_files
 from .models import APPROVED, PENDING, Template, TemplateFile
-from .schemas import FileIn, ManifestOut, SubmitIn, SubmitOut, TemplateOut
+from .schemas import FileIn, ManifestOut, StatusOut, SubmitIn, SubmitOut, TemplateOut
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
@@ -36,6 +36,23 @@ def get_workflow(workflow_id: str, session: Session = Depends(get_session)):
         description=template.description,
         tags=template.tags,
         files=[FileIn(path=f.path, content=f.content) for f in template.files],
+    )
+
+
+@router.get("/{workflow_id}/status", response_model=StatusOut)
+def workflow_status(workflow_id: str, session: Session = Depends(get_session)):
+    template = session.scalars(
+        select(Template)
+        .where(Template.id == workflow_id)
+        .order_by(Template.submitted_at.desc())
+    ).first()
+    if template is None:
+        raise HTTPException(status_code=404, detail="workflow not found")
+    return StatusOut(
+        id=template.id,
+        status=template.status,
+        submitted_at=template.submitted_at,
+        reviewed_at=template.reviewed_at,
     )
 
 

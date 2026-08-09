@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 import socket
 import sys
 import urllib.error
@@ -391,6 +392,15 @@ def cmd_context(args):
     print_ledger(project_dir)
 
 
+ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def resolve_api_url(args) -> str:
+    if getattr(args, "api_url", None):
+        return args.api_url.rstrip("/")
+    return os.environ.get("GCONTEXT_API_URL", DEFAULT_API_URL).rstrip("/")
+
+
 def fetch_workflow(workflow_id: str) -> dict:
     """Fetch one approved template bundle from the workflows API. Exits on failure."""
     base = os.environ.get("GCONTEXT_API_URL", DEFAULT_API_URL).rstrip("/")
@@ -468,6 +478,157 @@ def cmd_add(args):
     print(f"{DIM}(Re)start the server and the setup is also an MCP prompt: a slash command in Claude Code.{RESET}")
 
 
+def validate_template(folder: Path) -> dict:
+    """Validate a local template folder against the workflow standard.
+
+    Returns parsed frontmatter on success. Prints an error and exits on failure.
+    """
+    from .commands import parse_command
+
+    index_path = folder / "index.md"
+    if not index_path.exists():
+        print(f"Error: {folder}/index.md not found.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        meta, _ = parse_command(index_path.read_text(encoding="utf-8"))
+    except ValueError:
+        print("Error: index.md has no YAML frontmatter.", file=sys.stderr)
+        sys.exit(1)
+
+    for field in ("id", "name", "description"):
+        if not meta.get(field):
+            print(f"Error: index.md frontmatter is missing '{field}'.", file=sys.stderr)
+            sys.exit(1)
+
+    tags = meta.get("tags")
+    if not isinstance(tags, list) or len(tags) == 0:
+        print("Error: index.md frontmatter is missing 'tags' (at least one tag required).", file=sys.stderr)
+        sys.exit(1)
+
+    wid = meta["id"]
+    if not isinstance(wid, str) or not ID_RE.match(wid):
+        print("Error: id must be lowercase letters, digits, and hyphens.", file=sys.stderr)
+        sys.exit(1)
+
+    if not (folder / "steps").is_dir():
+        print("Error: steps/ folder not found.", file=sys.stderr)
+        sys.exit(1)
+
+    if not (folder / "runs" / "example").is_dir():
+        print("Error: runs/example/ folder not found.", file=sys.stderr)
+        sys.exit(1)
+
+    return meta
+
+
+def bundle_files(folder: Path) -> list[dict]:
+    """Walk a template folder and return [{path, content}] for all text files.
+
+    Skips dotfiles/dirs and __pycache__. Warns and skips non-UTF-8 files.
+    """
+    files = []
+    for filepath in sorted(folder.rglob("*")):
+        if not filepath.is_file():
+            continue
+        rel_parts = filepath.relative_to(folder).parts
+        if any(p.startswith(".") or p.startswith("__") for p in rel_parts):
+            continue
+        try:
+            content = filepath.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, ValueError):
+            print(f"Skipping {filepath.relative_to(folder)}: not a text file.", file=sys.stderr)
+            continue
+        files.append({"path": str(filepath.relative_to(folder)), "content": content})
+    return files
+
+
+def cmd_share(args):
+    if args.status:
+        _share_status(args)
+        return
+
+    folder = Path(args.module_path).resolve()
+    if not folder.is_dir():
+        print(f"Error: {args.module_path} is not a directory.", file=sys.stderr)
+        sys.exit(1)
+
+    meta = validate_template(folder)
+    files = bundle_files(folder)
+    wid = meta["id"]
+    base = resolve_api_url(args)
+
+    existing = False
+    try:
+        with urllib.request.urlopen(f"{base}/api/workflows/{wid}", timeout=10) as resp:
+            if resp.status == 200:
+                existing = True
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError):
+        pass
+
+    if existing and not args.yes:
+        print(f"Warning: '{wid}' is already published. A new submission replaces any")
+        print("pending entry and enters the review queue.")
+        answer = input("Continue? [y/N] ").strip()
+        if answer.lower() != "y":
+            print("Aborted.", file=sys.stderr)
+            sys.exit(1)
+
+    payload = json.dumps({"files": files}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base}/api/workflows",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        try:
+            detail = json.loads(body).get("detail", body)
+        except (json.JSONDecodeError, AttributeError):
+            detail = body
+        print(f"Error: the API rejected the submission: {detail}", file=sys.stderr)
+        sys.exit(1)
+    except (urllib.error.URLError, OSError):
+        print(f"Error: could not reach the API at {base}.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} submitted {wid} ({len(files)} files)")
+    print()
+    print(f"Status: {result.get('status', 'pending')} (under review)")
+    print(f"Check status: gcontext share --status {wid}")
+
+
+def _share_status(args):
+    wid = args.module_path
+    base = resolve_api_url(args)
+    url = f"{base}/api/workflows/{wid}/status"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            print(f"Error: no submission found for '{wid}'.", file=sys.stderr)
+        else:
+            print(f"Error: the API answered {e.code}.", file=sys.stderr)
+        sys.exit(1)
+    except (urllib.error.URLError, OSError):
+        print(f"Error: could not reach the API at {base}.", file=sys.stderr)
+        sys.exit(1)
+
+    submitted = data.get("submitted_at", "")[:16].replace("T", " ") + " UTC" if data.get("submitted_at") else "-"
+    reviewed = data.get("reviewed_at", "")[:16].replace("T", " ") + " UTC" if data.get("reviewed_at") else "-"
+
+    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {wid}")
+    print()
+    print(f"Status: {data['status']}")
+    print(f"Submitted: {submitted}")
+    print(f"Reviewed: {reviewed}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="gcontext",
@@ -506,6 +667,12 @@ def main():
     add_parser.add_argument("workflow_id", help="Workflow id from the directory (e.g. coolify-ops)")
     add_parser.add_argument("project", nargs="?", help="Path to gcontext project directory")
 
+    share_parser = subparsers.add_parser("share", help="Submit a workflow template to the marketplace for review")
+    share_parser.add_argument("module_path", help="Path to the template folder (or workflow id when used with --status)")
+    share_parser.add_argument("--api-url", dest="api_url", help="Override the API base URL")
+    share_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation when the workflow already exists")
+    share_parser.add_argument("--status", action="store_true", help="Query submission status instead of submitting")
+
     args = parser.parse_args()
 
     commands = {
@@ -515,6 +682,7 @@ def main():
         "connect": cmd_connect,
         "context": cmd_context,
         "add": cmd_add,
+        "share": cmd_share,
     }
     if args.command in commands:
         commands[args.command](args)

@@ -38,6 +38,13 @@ class AdminWorkflowOut(BaseModel):
     file_count: int
 
 
+class StatusOut(BaseModel):
+    id: str
+    status: str
+    submitted_at: datetime
+    reviewed_at: datetime | None
+
+
 class AdminUpdateIn(BaseModel):
     name: str | None = None
     description: str | None = None

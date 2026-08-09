@@ -157,6 +157,8 @@ Developing the dashboard itself needs node: `make web-dev` runs a Vite dev serve
 | `gcontext up [dir]` | Serve the folder over MCP |
 | `gcontext status [dir]` | Server state, connected clients, state overview |
 | `gcontext connect [client]` | Connection steps for claude, desktop, codex, cursor |
+| `gcontext add <id>` | Install a published workflow from the marketplace |
+| `gcontext share <path>` | Submit a workflow template to the marketplace for review |
 | `gcontext context [dir]` | Print the context ledger |
 
 ## Going further

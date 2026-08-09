@@ -27,8 +27,8 @@ Walk `index.md`, every file in `steps/`, and `functions/` if present. Collect ev
 
 Classify each element as exactly one of:
 
-- **(a) Parameter slot**: a value a new user supplies at setup or per run. Becomes a `parameters` entry in the manifest.
-- **(b) Connection requirement**: a service capability the workflow needs. Becomes a structured `connections` entry (`kind` + `description`), described generically ("the hosting panel API", not "Coolify").
+- **(a) Parameter slot**: a value that changes the scope or input of a single run. The test: "does this value appear in `0-parameters.*` and does it change what the run does?" If yes, it is a parameter. If the value configures which service to talk to, which queue to pull from, or how to authenticate, it belongs in the connection, not here. Becomes a `parameters` entry in the manifest.
+- **(b) Connection requirement**: a service capability the workflow needs, including all configuration that identifies *which* instance or account to use (team, project, queue, environment). Becomes a structured `connections` entry (`kind` + `description`), described generically ("the hosting panel API", not "Coolify").
 - **(c) Personal state**: files or content that must not ship (playbooks learned from the author's systems, configs, credentials references, logs). Excluded from the template; the setup command will regenerate the empty shapes.
 - **(d) Generic rewrite**: a concrete-service mention inside a step that stays in the text but must be reworded to the capability kind.
 
@@ -38,7 +38,7 @@ Present the full classification as one list and get the author's confirmation be
 
 Create the template folder next to the source module (for example `<workflow-id>-template/`). Build:
 
-- **`index.md`**: the frontmatter manifest per the spec: `id` (url-safe slug), `name`, `description`, `parameters` (name, description, required), `connections` (kind, description), `tags`. Then the body, rewritten clean: the objective in the first paragraph, what each parameter means in practice, the workflow's run naming scheme, and the general cross-step context.
+- **`index.md`**: the frontmatter manifest per the spec: `id` (url-safe slug), `name`, `description`, `parameters` (name, description, required), `connections` (kind, description), `tags`. The `parameters` and `connections` fields are critical: the marketplace site reads them from the frontmatter and renders them as two separate sections on the workflow's page. Connections show the services the workflow talks to (mapped once at setup). Parameters show the values the user provides per run (scope, target, input). Every entry must have a clear, user-facing `description`. Then the body, rewritten clean: the objective in the first paragraph, what each parameter means in practice, the workflow's run naming scheme, and the general cross-step context.
 - **`steps/`**: the same files as the source, with the classified specifics replaced by parameter references and generic capability wording. Keep the structure untouched: the shapes were proven by use; you strip, you do not redesign. Every step file must state Purpose, Input, Output (with schema when tabular), How to execute, and Done when; if a source step lacks one of these, derive it from what the lived runs show and confirm with the author.
 - **`functions/`**: same treatment, only if the source has it.
 - **`commands/setup.md`**: generate it from the slots, following the setup contract in the spec: read index.md and steps/index.md first; bind every setup-time parameter; map each connection requirement to a real service in the user's environment; generate the personal state (list in the command exactly what it creates); smoke-test the critical path; never edit steps/. Give it command frontmatter (`description`, optional `parameters`) and a self-contained prose body that assumes only file access, so it works in gcontext as an MCP prompt and standalone in any agent.
@@ -64,3 +64,11 @@ Run three checks and show the results:
 The finished template is a local folder. Submission: the marketplace accepts templates through its API with a review step (submitted entries stay pending until approved). If the submission endpoint is not yet available, tell the author the template is ready and where it lives, and stop there.
 
 Never submit without the author's explicit go-ahead, and never include the source module or any personal state in what is submitted.
+
+When the template passes all checks, submit it with the CLI:
+
+```
+gcontext share <template-folder>
+```
+
+The command validates the template against the standard, bundles the files, and submits them to the marketplace API. The submission enters the review queue. Check its status with `gcontext share --status <workflow-id>`.
