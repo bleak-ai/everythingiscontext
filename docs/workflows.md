@@ -16,7 +16,7 @@ This document is the template spec: the contract a workflow folder must follow t
     ...
   commands/           # required: entry points
     setup.md          #   required: the install interview (see setup contract)
-    start-workflow.md #   optional: the run driver, added when it earns its place
+    run.md            #   required: the run driver (see run command contract)
   functions/          # optional: per-step helper library
     2-transform/
       index.md        #   which helper applies to which case (the switch)
@@ -27,7 +27,7 @@ This document is the template spec: the contract a workflow folder must follow t
     2026-08-07/       #   the user's own runs, generated locally, never shared
 ```
 
-The only code-enforced requirement is `index.md` with valid frontmatter. Everything else is convention: step files state what they need from previous steps in prose; nothing checks it mechanically. The process is AI-driven, so requirements live in the text the agent reads, not in validation code.
+The only code-enforced requirement is `index.md` with valid frontmatter. Everything else is convention enforced by the run command: step files state what they need from previous steps in prose, and the run command drives execution through them in order, writing results into per-step folders inside the run. The process is AI-driven, so requirements live in the text the agent reads, not in validation code.
 
 ## Manifest: frontmatter in index.md
 
@@ -90,21 +90,22 @@ Inside a run folder:
 ```
 runs/<run-key>/
   index.md           # map and status: scope of the run, per-step status table
-  0-parameters.csv   # the parameters this run started with (.csv, .json, or .md)
-  1-init/
-    results.csv      # the step's output, schema per the step file
-    script.py        # optional: a generated script saved to avoid regenerating it
+  0-parameters.md    # the parameters this run started with (.csv, .json, or .md)
+  1-init/            # one folder per executed step, named like the step file
+    results.md       #   the step's output, schema per the step file
+    script.py        #   optional: a generated script saved to avoid regenerating it
   2-transform/
     results.json
   done/
     info.md          # written when the run closes: what was achieved, what was learned
 ```
 
+**This structure is mandatory, not a suggestion.** The run command creates it; agents must not flatten results into a single file. Every executed step gets its own folder inside the run, named like the step file without the extension (e.g. step `1-collect.md` writes to `1-collect/`). The folder's main artifact is `results.*`. When the agent generates code worth keeping, it saves the script next to the results.
+
 Conventions:
 
 - `0-parameters.*` records what the run started with, always, even when trivial. It is what makes a run reproducible and auditable.
-- One folder per executed step, named like the step file without the extension. Its main artifact is `results.*`. When the agent generated code worth keeping, it saves the script next to the results.
-- The run's `index.md` is the resume point: a session picking up a half-finished run reads it and continues from the first step that is not done.
+- The run's `index.md` is the resume point: a session picking up a half-finished run reads it and continues from the first step that is not done. The run command updates it after each step.
 - `done/` closes the run: `info.md` summarizes what was achieved and anything learned that should change the steps, plus any final deliverable files. A run without `done/` is open.
 - Learnings that outlive the run (a new blocker type, a better procedure) get folded back into the step files or `functions/`. That is how the workflow improves with use.
 
@@ -120,7 +121,7 @@ Ships in the template:
 
 - `index.md` with the frontmatter manifest
 - `steps/`
-- `commands/setup.md` (and any other generic commands)
+- `commands/setup.md` and `commands/run.md`
 - `functions/` when the workflow has them
 - `runs/example/`: the example run
 
@@ -157,6 +158,20 @@ The same file must work on both install paths:
 
 - **In gcontext**: `commands/setup.md` carries the standard command frontmatter (`description`, optional `parameters`), so the server exposes it as an MCP prompt and the user runs it as a slash command.
 - **Standalone**: the user downloads the plain folder, opens any agent in it, and says "run the setup in commands/setup.md". The agent reads the file and executes the same interview. Therefore the body must be self-contained prose that assumes only file access, not gcontext tools.
+
+## The run command contract
+
+`commands/run.md` is the entry point for every execution. It drives the agent through the steps in order and enforces the per-step folder structure in the run. The contract:
+
+1. **Read first**: read the workflow's `index.md`, `steps/index.md`, and `runs/example/` to understand the procedure and what correct output looks like.
+2. **Collect parameters**: ask for any per-run parameters declared in the manifest. Write them to `0-parameters.*` in the run folder.
+3. **Create the run folder**: name it per the workflow's run naming scheme (stated in `index.md`). Create `index.md` with the run scope and a per-step status table, all steps marked pending.
+4. **Execute each step in order**: read the step file, execute it, write the output into a folder named like the step file without the extension (e.g. `1-collect/results.md`). Update the run's `index.md` status table after each step.
+5. **Close the run**: when all steps are done, create `done/info.md` with a summary of what was achieved and anything learned. Update the run's `index.md` to mark the run as done.
+
+The run command never skips the folder structure. A step that produces no file still gets its folder with a brief `results.md` noting "no output" and why. The run folder is the audit trail; a flat file or a single summary defeats its purpose.
+
+The same file must work on both paths (gcontext MCP prompt and standalone agent), just like the setup command.
 
 ## Sharing a workflow
 

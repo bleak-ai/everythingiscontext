@@ -42,6 +42,7 @@ Create the template folder next to the source module (for example `<workflow-id>
 - **`steps/`**: the same files as the source, with the classified specifics replaced by parameter references and generic capability wording. Keep the structure untouched: the shapes were proven by use; you strip, you do not redesign. Every step file must state Purpose, Input, Output (with schema when tabular), How to execute, and Done when; if a source step lacks one of these, derive it from what the lived runs show and confirm with the author.
 - **`functions/`**: same treatment, only if the source has it.
 - **`commands/setup.md`**: generate it from the slots, following the setup contract in the spec: read index.md and steps/index.md first; bind every setup-time parameter; map each connection requirement to a real service in the user's environment; generate the personal state (list in the command exactly what it creates); smoke-test the critical path; never edit steps/. Give it command frontmatter (`description`, optional `parameters`) and a self-contained prose body that assumes only file access, so it works in gcontext as an MCP prompt and standalone in any agent.
+- **`commands/run.md`**: generate the run driver, following the run command contract in the spec. It must: read the workflow's index.md and steps/index.md, collect per-run parameters, create the run folder with index.md and 0-parameters.*, execute each step in order writing output into per-step folders (e.g. `1-collect/results.md`), update the run's index.md after each step, and close the run with `done/info.md`. Give it command frontmatter (`description`, optional `parameters`) and a self-contained prose body.
 
 ## Phase 4: fabricate the example run
 
@@ -55,7 +56,7 @@ Build `runs/example/` inside the template, in the exact runs/ shape: `index.md` 
 
 Run three checks and show the results:
 
-1. **Spec compliance**: every required file exists (index.md with parseable frontmatter carrying all fields, steps/ with index and numbered files, commands/setup.md, runs/example/ complete with done/); every step states Purpose, Input, Output, How, Done when.
+1. **Spec compliance**: every required file exists (index.md with parseable frontmatter carrying all fields, steps/ with index and numbered files, commands/setup.md, commands/run.md, runs/example/ complete with per-step folders and done/); every step states Purpose, Input, Output, How, Done when.
 2. **Leak scan**: search the entire template, example run included, for every author-specific string collected in phase 2, plus generic patterns: email addresses, things shaped like API keys or tokens, the author's domains. Present every hit. The template passes only with zero unexplained hits.
 3. **Cold read**: in a fresh context (a subagent or a new session) that sees only the template folder, have the agent explain back what the workflow does, what it needs, and what a run produces. If the explanation is wrong or incomplete, the template is not self-contained; fix and repeat.
 
