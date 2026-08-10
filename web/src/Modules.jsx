@@ -24,7 +24,6 @@ function ModuleCard({ mod }) {
     <div {...hp} style={{ ...cardBase, ...(h ? cardHover : null), padding: 15, display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
         <span style={{ fontFamily: mono, fontSize: 14.5, fontWeight: 600, color: C.ink }}>{mod.name}</span>
-        <Chip>v{mod.version}</Chip>
         {(mod.tags || []).map((t) => <Chip key={t} tone="stat">{t}</Chip>)}
       </div>
       {mod.description && <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.55, color: C.tMuted }}>{mod.description}</p>}
