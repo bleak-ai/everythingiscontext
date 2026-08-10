@@ -83,6 +83,26 @@ def test_api_tree_excludes_machine_and_secret_files(client):
     assert not any(p.startswith(".venv") for p in paths)
 
 
+def test_status_reports_staleness(client, project):
+    import os
+
+    server.snapshot_startup_files()
+    stale = client.get("/status").json()["stale"]
+    assert stale == {"agent_md": False, "commands": False}
+
+    agent_md = project / "agent.md"
+    os.utime(agent_md, (agent_md.stat().st_mtime + 10,) * 2)
+    stale = client.get("/status").json()["stale"]
+    assert stale["agent_md"] is True
+    assert stale["commands"] is False
+
+    cmd = project / "modules" / "notes" / "commands" / "report.md"
+    cmd.parent.mkdir(parents=True)
+    cmd.write_text("---\ndescription: d\n---\nbody\n")
+    stale = client.get("/status").json()["stale"]
+    assert stale["commands"] is True
+
+
 def test_api_events_limit_since_and_ring_cap(client):
     for i in range(350):
         server.record_event("s", "tool", f"tool{i}")
