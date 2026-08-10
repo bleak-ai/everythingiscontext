@@ -113,7 +113,7 @@ def test_commands_ledger_pipe(project):
 
 def test_register_framework_prompts_setup():
     mcp = FastMCP("t")
-    assert commands.register_framework_prompts(mcp) == 2
+    assert commands.register_framework_prompts(mcp) == 3
 
     async def go():
         async with Client(mcp) as c:
