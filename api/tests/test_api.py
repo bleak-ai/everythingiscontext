@@ -157,6 +157,38 @@ def test_admin_list_all_statuses(client, admin):
     assert by_id["alt-flow"]["status"] == "rejected"
 
 
+def test_download_counter_increments_on_fetch(client, admin):
+    submit(client)
+    client.post("/api/moderation/workflows/demo-flow/approve", headers=admin)
+
+    client.get("/api/workflows/demo-flow")
+    client.get("/api/workflows/demo-flow")
+    listed = client.get("/api/admin/workflows", headers=admin).json()
+    assert listed[0]["downloads"] == 2
+
+
+def test_download_counter_skips_site_fetches(client, admin):
+    submit(client)
+    client.post("/api/moderation/workflows/demo-flow/approve", headers=admin)
+
+    client.get("/api/workflows/demo-flow", headers={"X-Source": "site"})
+    listed = client.get("/api/admin/workflows", headers=admin).json()
+    assert listed[0]["downloads"] == 0
+
+    client.get("/api/workflows/demo-flow")
+    listed = client.get("/api/admin/workflows", headers=admin).json()
+    assert listed[0]["downloads"] == 1
+
+
+def test_download_counter_ignores_missing_and_pending(client, admin):
+    submit(client)
+    # Pending: the fetch 404s and must not create a count once approved.
+    client.get("/api/workflows/demo-flow")
+    client.post("/api/moderation/workflows/demo-flow/approve", headers=admin)
+    listed = client.get("/api/admin/workflows", headers=admin).json()
+    assert listed[0]["downloads"] == 0
+
+
 def test_admin_list_requires_token(client):
     assert client.get("/api/admin/workflows").status_code == 401
     bad = {"Authorization": "Bearer wrong"}

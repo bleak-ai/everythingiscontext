@@ -36,6 +36,7 @@ class AdminWorkflowOut(BaseModel):
     submitted_at: datetime
     reviewed_at: datetime | None
     file_count: int
+    downloads: int
 
 
 class StatusOut(BaseModel):

@@ -61,7 +61,9 @@ def client(postgres):
     from app.db import engine
     from app.main import app
     from app.models import Base
+    from app.ratelimit import limiter
 
+    limiter.reset()
     Base.metadata.drop_all(engine())
     Base.metadata.create_all(engine())
     with TestClient(app) as test_client:
