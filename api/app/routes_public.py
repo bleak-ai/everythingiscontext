@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from .db import get_session
 from .manifest import BundleError, parse_manifest, validate_files
+from .ratelimit import limiter
 from .models import APPROVED, PENDING, Template, TemplateFile
 from .schemas import FileIn, ManifestOut, StatusOut, SubmitIn, SubmitOut, TemplateOut
 
@@ -22,7 +23,9 @@ def list_workflows(session: Session = Depends(get_session)):
 
 
 @router.get("/{workflow_id}", response_model=TemplateOut)
-def get_workflow(workflow_id: str, session: Session = Depends(get_session)):
+def get_workflow(
+    workflow_id: str, request: Request, session: Session = Depends(get_session)
+):
     template = session.scalars(
         select(Template)
         .where(Template.id == workflow_id, Template.status == APPROVED)
@@ -30,6 +33,10 @@ def get_workflow(workflow_id: str, session: Session = Depends(get_session)):
     ).first()
     if template is None:
         raise HTTPException(status_code=404, detail="workflow not found")
+    # The landing's own page renders send X-Source: site and do not count.
+    if request.headers.get("x-source") != "site":
+        template.downloads += 1
+        session.commit()
     return TemplateOut(
         id=template.id,
         name=template.name,
@@ -57,7 +64,8 @@ def workflow_status(workflow_id: str, session: Session = Depends(get_session)):
 
 
 @router.post("", response_model=SubmitOut, status_code=201)
-def submit_workflow(body: SubmitIn, session: Session = Depends(get_session)):
+@limiter.limit("5/hour")
+def submit_workflow(request: Request, body: SubmitIn, session: Session = Depends(get_session)):
     files = [f.model_dump() for f in body.files]
     try:
         validate_files(files)

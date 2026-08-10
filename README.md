@@ -52,7 +52,7 @@ my-agent/
   archive/               # excluded from scanning, still readable
 ```
 
-Markdown holds the context, YAML holds the config. Edit any of it with a text editor; the server reads the files on demand, so changes apply immediately. Two exceptions load at server start and need a restart to pick up edits: `agent.md` (pushed in the MCP handshake) and command files.
+Markdown holds the context, YAML holds the config. Edit any of it with a text editor; the server reads the files on demand, so changes apply immediately. Two exceptions load at server start and need a restart to pick up edits: `agent.md` (pushed in the MCP handshake) and command files. The server warns when these files change: in the `write_file` result, and with a line on the server terminal.
 
 At connect, every agent receives two layers of instructions through the handshake: first gcontext's own fixed instructions (shipped with the package, they explain the tools and the folder conventions), then your `agent.md` (what this particular agent is). You only ever write the second layer.
 
@@ -89,6 +89,8 @@ And write `connections/stripe/index.md`: what the service is for, which endpoint
 
 That's it. The server picks the connection up on the next tool call (no restart), `gcontext status` shows whether every declared secret has a value, and the agent can now call the API through `run_adhoc_script` and `run_script` without ever seeing the key.
 
+The full reference (manifest fields, index.md guidance, smoke tests, auth patterns, starter manifests) is in [docs/connections.md](docs/connections.md).
+
 ## Context ledger
 
 `gcontext context` lists every channel through which context reaches the agent, marked as `loaded` (pushed at connect), `on demand` (agent pulls it via a visible tool call), `skipped` (nothing to push), or `uncontrolled` (owned by the runtime, outside gcontext's view). gcontext only inserts context through the channels on that list. If you want to know what the agent is seeing, this is the answer.
@@ -108,6 +110,12 @@ claude --mcp-config '{"mcpServers":{"gcontext":{"type":"http","url":"http://127.
 ## Secrets
 
 `connection.yaml` declares secret names; `secrets.env` holds the values. When the agent calls `run_script` or `run_adhoc_script`, the values are injected as environment variables and scrubbed from the script's output. The agent can know that `STRIPE_API_KEY` exists and use it in a script, but never reads the value. `secrets.env` is gitignored by `init` and the `write_file` tool refuses to touch it.
+
+One honest caveat: `secrets.env` is plain text on disk. gcontext never shows
+values to the agent, but any other program with filesystem access, including
+your AI client's own file tools, can read the file directly. `init` creates it
+with mode 600 and gitignores it. If your client supports permission rules,
+deny it read access to `secrets.env` as well.
 
 Both tools execute Python in a per-project venv with each connection's declared deps preinstalled (via uv).
 
@@ -157,14 +165,15 @@ Developing the dashboard itself needs node: `make web-dev` runs a Vite dev serve
 | `gcontext up [dir]` | Serve the folder over MCP |
 | `gcontext status [dir]` | Server state, connected clients, state overview |
 | `gcontext connect [client]` | Connection steps for claude, desktop, codex, cursor |
-| `gcontext add <id>` | Install a published workflow from the marketplace |
-| `gcontext share <path>` | Submit a workflow template to the marketplace for review |
+| `gcontext add <id>` | Install a workflow from the registry repo ([github.com/bleak-ai/workflows](https://github.com/bleak-ai/workflows)) or from any public GitHub repo folder via `gcontext add <github-url>` |
+| `gcontext share <path>` | Validate a workflow template folder and print the steps to submit it as a pull request to the registry |
 | `gcontext context [dir]` | Print the context ledger |
 
 ## Going further
 
 - [examples/ops-agent](examples/ops-agent): a complete agent folder with connections, modules, a command, and an archived module
 - [docs/design.md](docs/design.md): why gcontext is built this way, decision by decision
+- [docs/connections.md](docs/connections.md): the connection reference, from manifest fields to smoke tests
 - [docs/modules.md](docs/modules.md): writing portable, shareable modules
 - [docs/workflows.md](docs/workflows.md): the workflow template standard, the contract for distributable context-based workflows
 - [docs/share-workflow.md](docs/share-workflow.md): instructions an author's agent follows to turn a lived workflow into a shareable template

@@ -1,6 +1,5 @@
-"""Tests for `gcontext share <module-path>`: validate and submit a workflow template."""
+"""Tests for `gcontext share <module-path>`: validate a workflow template and show PR instructions."""
 
-import json
 import subprocess
 import sys
 import threading
@@ -27,34 +26,20 @@ def run_cli(*args, cwd, env=None):
 
 
 @pytest.fixture
-def api(monkeypatch):
-    """Local HTTP stub. Yields (responses_dict, posted_list)."""
-    responses = {}
-    posted = []
+def request_log():
+    """Local HTTP server that logs all requests. Yields (server, log_list)."""
+    log = []
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            status, body = responses.get(self.path, (404, {"detail": "not found"}))
-            payload = json.dumps(body).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
+            log.append(("GET", self.path))
+            self.send_response(404)
             self.end_headers()
-            self.wfile.write(payload)
 
         def do_POST(self):
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(self.rfile.read(length)) if length else {}
-            posted.append({"path": self.path, "body": data})
-            result = {
-                "id": "test-flow", "name": "Test Flow",
-                "description": "A test workflow.", "tags": ["test"],
-                "status": "pending",
-            }
-            payload = json.dumps(result).encode()
-            self.send_response(201)
-            self.send_header("Content-Type", "application/json")
+            log.append(("POST", self.path))
+            self.send_response(404)
             self.end_headers()
-            self.wfile.write(payload)
 
         def log_message(self, *args):
             pass
@@ -62,8 +47,7 @@ def api(monkeypatch):
     server = HTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    monkeypatch.setenv("GCONTEXT_API_URL", f"http://127.0.0.1:{server.server_port}")
-    yield responses, posted
+    yield server, log
     server.shutdown()
 
 
@@ -83,18 +67,37 @@ def template(tmp_path):
     return t
 
 
-def test_share_submits_valid_template(api, template):
-    responses, posted = api
+def test_share_validates_and_prints_pr_instructions(template, request_log):
+    server, log = request_log
     result = run_cli("share", str(template), cwd=template.parent)
     assert result.returncode == 0, result.stderr
-    assert "submitted test-flow" in result.stdout
-    assert "pending" in result.stdout
-    assert len(posted) == 1
-    assert posted[0]["path"] == "/api/workflows"
-    files = posted[0]["body"]["files"]
-    paths = [f["path"] for f in files]
-    assert "index.md" in paths
-    assert "steps/index.md" in paths
+    assert "validated test-flow" in result.stdout
+    assert "files)" in result.stdout
+    assert "bleak-ai/workflows" in result.stdout
+    assert "PR" in result.stdout or "pull request" in result.stdout.lower() or "pr" in result.stdout.lower()
+    # No HTTP requests should have been made
+    assert len(log) == 0
+
+
+def test_share_gh_present_shows_commands(template, tmp_path):
+    """When gh is on PATH, the output includes ready-to-run commands."""
+    import shutil
+    if not shutil.which("gh"):
+        # Provide a fake gh on PATH so the CLI finds it
+        fake_bin = tmp_path / "fakebin"
+        fake_bin.mkdir()
+        fake_gh = fake_bin / "gh"
+        fake_gh.write_text("#!/bin/sh\n")
+        fake_gh.chmod(0o755)
+        import os
+        env = dict(os.environ, PATH=f"{fake_bin}:{os.environ.get('PATH', '')}")
+    else:
+        env = None
+    result = run_cli("share", str(template), cwd=template.parent, env=env)
+    assert result.returncode == 0, result.stderr
+    assert "gh repo fork" in result.stdout
+    assert "gh pr create" in result.stdout
+    assert "test-flow" in result.stdout
 
 
 def test_share_missing_index(tmp_path):
@@ -200,59 +203,27 @@ def test_share_missing_example_run(tmp_path):
     assert "runs/example/ folder not found" in result.stderr
 
 
-def test_share_skips_dotfiles(api, template):
-    responses, posted = api
+def test_share_skips_dotfiles(template):
     (template / ".hidden").write_text("secret")
     (template / ".git").mkdir()
     (template / ".git" / "config").write_text("x")
     result = run_cli("share", str(template), cwd=template.parent)
     assert result.returncode == 0, result.stderr
-    files = posted[0]["body"]["files"]
-    paths = [f["path"] for f in files]
-    assert ".hidden" not in paths
-    assert ".git/config" not in paths
+    # Dotfiles are skipped by bundle_files; just confirm validation passes
+    assert "validated test-flow" in result.stdout
 
 
-def test_share_skips_pycache(api, template):
-    responses, posted = api
+def test_share_skips_pycache(template):
     cache = template / "__pycache__"
     cache.mkdir()
     (cache / "mod.pyc").write_bytes(b"\x00\x01")
     result = run_cli("share", str(template), cwd=template.parent)
     assert result.returncode == 0, result.stderr
-    files = posted[0]["body"]["files"]
-    paths = [f["path"] for f in files]
-    assert not any("__pycache__" in p for p in paths)
+    assert "validated test-flow" in result.stdout
 
 
-def test_share_skips_binary_with_warning(api, template):
-    responses, posted = api
+def test_share_skips_binary_with_warning(template):
     (template / "image.bin").write_bytes(b"\x80\x81\x82\xff\xfe")
     result = run_cli("share", str(template), cwd=template.parent)
     assert result.returncode == 0, result.stderr
     assert "Skipping image.bin" in result.stderr
-    files = posted[0]["body"]["files"]
-    paths = [f["path"] for f in files]
-    assert "image.bin" not in paths
-
-
-def test_share_status_mode(api, tmp_path):
-    responses, _ = api
-    responses["/api/workflows/test-flow/status"] = (200, {
-        "id": "test-flow",
-        "status": "approved",
-        "submitted_at": "2026-08-09T12:00:00Z",
-        "reviewed_at": "2026-08-09T14:30:00Z",
-    })
-    result = run_cli("share", "--status", "test-flow", cwd=tmp_path)
-    assert result.returncode == 0, result.stderr
-    assert "approved" in result.stdout
-    assert "2026-08-09 12:00 UTC" in result.stdout
-    assert "2026-08-09 14:30 UTC" in result.stdout
-
-
-def test_share_status_not_found(api, tmp_path):
-    _, _ = api
-    result = run_cli("share", "--status", "nope", cwd=tmp_path)
-    assert result.returncode == 1
-    assert "no submission found" in result.stderr

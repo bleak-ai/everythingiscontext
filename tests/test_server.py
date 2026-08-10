@@ -98,6 +98,32 @@ def test_new_file_without_parent_index_does_not_warn(project):
     assert "Warning" not in out
 
 
+def test_agent_md_write_notes_restart(project):
+    out = server.write_file("agent.md", "# Agent\nbe useful\n")
+    assert "Note: agent.md is pushed at connect" in out
+    assert "restart" in out
+    assert "Warning" not in out  # agent.md stays exempt from the index check
+
+
+def test_command_write_notes_restart(project):
+    out = server.write_file(
+        "connections/gmail/commands/send.md", "---\ndescription: d\n---\nbody\n"
+    )
+    assert "Note: commands are registered at server start" in out
+    out = server.write_file(
+        "modules/notes/commands/report.py", "# ---\n# description: d\n# ---\n"
+    )
+    assert "Note: commands are registered at server start" in out
+    # Not a command file: wrong folder or wrong extension.
+    assert "Note:" not in server.write_file("modules/notes/scripts/report.py", "x")
+    assert "Note:" not in server.write_file("modules/notes/commands/notes.txt", "x")
+
+
+def test_ordinary_write_has_no_restart_note(project):
+    out = server.write_file("modules/notes/index.md", "summary")
+    assert "Note:" not in out
+
+
 def test_write_new_file_reports_size_and_lines(project):
     out = server.write_file("modules/notes/note.md", "one\ntwo\n")
     assert out.startswith("Created: modules/notes/note.md")

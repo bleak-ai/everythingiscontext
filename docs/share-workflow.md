@@ -1,6 +1,6 @@
 # share-workflow
 
-Instructions for an AI agent that turns a private, lived workflow into a marketplace template. You are the agent; the human in the conversation is the author. The input is their workflow module, personal state included. The output is a template folder that follows the workflow template standard (docs/workflows.md) and contains zero personal data.
+Instructions for an AI agent that turns a private, lived workflow into a distributable template. You are the agent; the human in the conversation is the author. The input is their workflow module, personal state included. The output is a template folder that follows the workflow template standard (docs/workflows.md) and contains zero personal data.
 
 Work through the phases in order. Propose, let the author confirm, then act. Do not skip a phase.
 
@@ -19,7 +19,7 @@ Check the workflow against the five tests for shareable workflows and report the
 4. **Lived first.** At least one real, completed run exists in `runs/`. The shapes must have been discovered by use, not designed on paper.
 5. **Low trust barrier.** Few parameter slots, few secrets. Every credential a stranger must grant raises the install cost.
 
-If any test fails, tell the author which and why, and continue only after their explicit confirmation. The marketplace is open; you warn, the author decides.
+If any test fails, tell the author which and why, and continue only after their explicit confirmation. The registry is open; you warn, the author decides.
 
 ## Phase 2: extract the slots
 
@@ -38,7 +38,7 @@ Present the full classification as one list and get the author's confirmation be
 
 Create the template folder next to the source module (for example `<workflow-id>-template/`). Build:
 
-- **`index.md`**: the frontmatter manifest per the spec: `id` (url-safe slug), `name`, `description`, `parameters` (name, description, required), `connections` (kind, description), `tags`. The `parameters` and `connections` fields are critical: the marketplace site reads them from the frontmatter and renders them as two separate sections on the workflow's page. Connections show the services the workflow talks to (mapped once at setup). Parameters show the values the user provides per run (scope, target, input). Every entry must have a clear, user-facing `description`. Then the body, rewritten clean: the objective in the first paragraph, what each parameter means in practice, the workflow's run naming scheme, and the general cross-step context.
+- **`index.md`**: the frontmatter manifest per the spec: `id` (url-safe slug), `name`, `description`, `parameters` (name, description, required), `connections` (kind, description), `tags`. The `parameters` and `connections` fields are critical: the directory page on gcontext.ai reads them from the frontmatter and renders them as two separate sections on the workflow's page. Connections show the services the workflow talks to (mapped once at setup). Parameters show the values the user provides per run (scope, target, input). Every entry must have a clear, user-facing `description`. Then the body, rewritten clean: the objective in the first paragraph, what each parameter means in practice, the workflow's run naming scheme, and the general cross-step context.
 - **`steps/`**: the same files as the source, with the classified specifics replaced by parameter references and generic capability wording. Keep the structure untouched: the shapes were proven by use; you strip, you do not redesign. Every step file must state Purpose, Input, Output (with schema when tabular), How to execute, and Done when; if a source step lacks one of these, derive it from what the lived runs show and confirm with the author.
 - **`functions/`**: same treatment, only if the source has it.
 - **`commands/setup.md`**: generate it from the slots, following the setup contract in the spec: read index.md and steps/index.md first; bind every setup-time parameter; map each connection requirement to a real service in the user's environment; generate the personal state (list in the command exactly what it creates); smoke-test the critical path; never edit steps/. Give it command frontmatter (`description`, optional `parameters`) and a self-contained prose body that assumes only file access, so it works in gcontext as an MCP prompt and standalone in any agent.
@@ -49,7 +49,7 @@ Build `runs/example/` inside the template, in the exact runs/ shape: `index.md` 
 
 - Default: start from the author's most representative real run and replace every real value with a coherent fake: invented names, plausible numbers, same schemas, same story arc.
 - Fallback: if the author's runs are too sensitive to anonymize confidently, fabricate the example fully from the step definitions. Say so to the author.
-- Keep the fake data internally consistent: the same invented name must flow through all steps, so a site visitor can follow one item from parameters to done. This example is what the marketplace renders on the workflow's page; it is the template's sales pitch.
+- Keep the fake data internally consistent: the same invented name must flow through all steps, so a site visitor can follow one item from parameters to done. This example is what the directory page renders on the workflow's page; it is the template's showcase.
 
 ## Phase 5: verify
 
@@ -61,14 +61,8 @@ Run three checks and show the results:
 
 ## Phase 6: hand off
 
-The finished template is a local folder. Submission: the marketplace accepts templates through its API with a review step (submitted entries stay pending until approved). If the submission endpoint is not yet available, tell the author the template is ready and where it lives, and stop there.
+The finished template is a local folder. Run `gcontext share <template-folder>` to validate it against the template standard. Then submit it by opening a pull request against [github.com/bleak-ai/workflows](https://github.com/bleak-ai/workflows), adding the folder at the repo root. The share command prints the exact steps.
 
 Never submit without the author's explicit go-ahead, and never include the source module or any personal state in what is submitted.
 
-When the template passes all checks, submit it with the CLI:
-
-```
-gcontext share <template-folder>
-```
-
-The command validates the template against the standard, bundles the files, and submits them to the marketplace API. The submission enters the review queue. Check its status with `gcontext share --status <workflow-id>`.
+A maintainer reviews and merges the pull request. The directory on gcontext.ai renders from the registry.

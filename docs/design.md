@@ -42,13 +42,13 @@ This is the invariant that never changes: secrets never enter the context window
 
 ## One server, one URL
 
-`gcontext up` serves the folder at one local HTTP URL. Every harness connects to that URL. There is no stdio mode.
+`gcontext up` serves the folder at one local HTTP URL. Every client connects to that URL. There is no stdio mode.
 
-The first MCP version used stdio, and a day of real use produced a catalog of failures with one root cause: stdio inverts the mental model. There is no "server running"; every harness silently spawns its own private copy from a long registration command. Commands paste-truncate silently and fail minutes later as a bare "not connected". "Is it connected?" has no answer without scanning config files across harnesses and scopes. People run the server by hand, see it "hang", and assume it is broken.
+The first MCP version used stdio, and a day of real use produced a catalog of failures with one root cause: stdio inverts the mental model. There is no "server running"; every client silently spawns its own private copy from a long registration command. Commands paste-truncate silently and fail minutes later as a bare "not connected". "Is it connected?" has no answer without scanning config files across clients and scopes. People run the server by hand, see it "hang", and assume it is broken.
 
-With one server at a URL: connecting is pasting a URL, which cannot half-truncate into something that almost works. Up or down is observable; Ctrl+C revokes access everywhere at once. Because all harnesses share the server, the server knows who is connected (the MCP handshake carries `clientInfo`, and `gcontext status` shows it). And local vs deployed becomes "local URL vs remote URL", the same shape.
+With one server at a URL: connecting is pasting a URL, which cannot half-truncate into something that almost works. Up or down is observable; Ctrl+C revokes access everywhere at once. Because all clients share the server, the server knows who is connected (the MCP handshake carries `clientInfo`, and `gcontext status` shows it). And local vs deployed becomes "local URL vs remote URL", the same shape.
 
-Rejected along the way: per-harness adapters that write each client's config (scope creep into files gcontext doesn't own), a machine-wide agent name registry (another layer of state; the URL already is the handle), and config-scanning diagnostics (detective work compensating for a transport that hides the truth).
+Rejected along the way: per-client adapters that write each client's config (scope creep into files gcontext doesn't own), a machine-wide agent name registry (another layer of state; the URL already is the handle), and config-scanning diagnostics (detective work compensating for a transport that hides the truth).
 
 The accepted tradeoff: something must be running.
 

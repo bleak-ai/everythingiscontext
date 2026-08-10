@@ -86,7 +86,6 @@ async def api_modules(request: Request) -> JSONResponse:
         result.append({
             "name": mname,
             "description": mod.description,
-            "version": mod.version,
             "tags": mod.tags,
             "files": state.module_files(root, mname),
         })

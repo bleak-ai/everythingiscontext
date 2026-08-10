@@ -121,6 +121,33 @@ def _index_warning(root: Path, target: Path, content: str, existed: bool) -> str
     return ""
 
 
+def _restart_note(root: Path, target: Path) -> str:
+    """Note text for files that only load at server start, or '' otherwise.
+
+    agent.md is pushed in the MCP handshake and command files register as
+    prompts at startup; a write through this tool takes effect only after a
+    restart. Advisory only, same contract as _index_warning.
+    """
+    parts = target.relative_to(root.resolve()).parts
+    if parts == ("agent.md",):
+        return (
+            " Note: agent.md is pushed at connect; this change reaches clients "
+            "only after a restart (stop the server, gcontext up, reconnect the client)."
+        )
+    if (
+        len(parts) == 4
+        and parts[0] in ("connections", "modules")
+        and parts[2] == "commands"
+        and target.suffix in (".md", ".py")
+    ):
+        return (
+            " Note: commands are registered at server start; this command appears "
+            "(or updates) only after a restart (stop the server, gcontext up, "
+            "reconnect the client)."
+        )
+    return ""
+
+
 DIFF_MAX_LINES = 200
 
 
@@ -163,6 +190,7 @@ def write_file(root: Path, path: str, content: str) -> str:
     return (
         line
         + _index_warning(root, target, content, existed)
+        + _restart_note(root, target)
         + (_write_diff(path, before, content) if existed else "")
     )
 

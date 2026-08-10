@@ -51,6 +51,61 @@ def _tool_doc(name: str) -> str:
 # Live MCP sessions, keyed by session id: {"client": ..., "connected": ..., "last_seen": ...}
 SESSIONS: dict[str, dict] = {}
 
+# Two file classes load only at server start: agent.md (pushed in the MCP
+# handshake) and command files (registered as prompts). No watchers, per the
+# no-background-behavior design: a startup snapshot of their mtimes, compared
+# lazily on tool calls, with one stderr line per class per server lifetime.
+STARTUP_SNAPSHOT: dict = {"agent_md": None, "commands": {}}
+_STALE = {"agent_md": False, "commands": False}
+_STALE_WARNED = {"agent_md": False, "commands": False}
+_STALE_CHECK_INTERVAL = 5.0
+_last_stale_check = 0.0
+
+
+def _mtime(path: Path) -> float | None:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def snapshot_startup_files():
+    """Record the state of the start-time-loaded files. Call once, after
+    load_instructions() and register_commands() have run."""
+    STARTUP_SNAPSHOT["agent_md"] = _mtime(PROJECT_DIR / "agent.md")
+    STARTUP_SNAPSHOT["commands"] = {
+        str(p): _mtime(p) for p in commands_mod.discover(PROJECT_DIR)
+    }
+    _STALE.update(agent_md=False, commands=False)
+    _STALE_WARNED.update(agent_md=False, commands=False)
+
+
+def check_staleness(force: bool = False) -> dict:
+    """Compare the current files against the startup snapshot.
+
+    Once a class is stale it stays stale until restart, so the comparison for
+    it stops. Throttled to one filesystem check per few seconds unless forced.
+    """
+    global _last_stale_check
+    now = time.monotonic()
+    if not force and now - _last_stale_check < _STALE_CHECK_INTERVAL:
+        return dict(_STALE)
+    _last_stale_check = now
+    if not _STALE["agent_md"]:
+        _STALE["agent_md"] = _mtime(PROJECT_DIR / "agent.md") != STARTUP_SNAPSHOT["agent_md"]
+    if not _STALE["commands"]:
+        current = {str(p): _mtime(p) for p in commands_mod.discover(PROJECT_DIR)}
+        _STALE["commands"] = current != STARTUP_SNAPSHOT["commands"]
+    if _STALE["agent_md"] and not _STALE_WARNED["agent_md"]:
+        _STALE_WARNED["agent_md"] = True
+        print("  ! agent.md changed since start; restart to push the new version "
+              "(stop, gcontext up, reconnect the client)", file=sys.stderr)
+    if _STALE["commands"] and not _STALE_WARNED["commands"]:
+        _STALE_WARNED["commands"] = True
+        print("  ! commands changed since start; restart to re-register them",
+              file=sys.stderr)
+    return dict(_STALE)
+
 # Activity feed for the dashboard: in-memory ring buffer, gone on restart.
 EVENTS: deque = deque(maxlen=300)
 _EVENT_SEQ = itertools.count(1)
@@ -125,6 +180,7 @@ class ConnectionTracker(Middleware):
         return await call_next(context)
 
     async def on_call_tool(self, context, call_next):
+        check_staleness()
         name = getattr(context.message, "name", "?")
         arguments = getattr(context.message, "arguments", None) or {}
         detail = _event_detail(name, arguments)
@@ -166,18 +222,32 @@ class ConnectionTracker(Middleware):
             name=agent_name,
             mime_type="text/markdown",
         ))
-        for name in state.discover_modules(PROJECT_DIR):
+        modules = state.discover_modules(PROJECT_DIR)
+        if modules:
             result.append(Resource(
-                uri=f"agent://{agent_name}/modules/{name}",
-                name=f"modules / {name}",
+                uri=f"agent://{agent_name}/modules",
+                name="modules",
                 mime_type="text/markdown",
             ))
-        for name in state.load_connections(PROJECT_DIR):
+            for name in modules:
+                result.append(Resource(
+                    uri=f"agent://{agent_name}/modules/{name}",
+                    name=f"modules / {name}",
+                    mime_type="text/markdown",
+                ))
+        connections = state.load_connections(PROJECT_DIR)
+        if connections:
             result.append(Resource(
-                uri=f"agent://{agent_name}/connections/{name}",
-                name=f"connections / {name}",
+                uri=f"agent://{agent_name}/connections",
+                name="connections",
                 mime_type="text/markdown",
             ))
+            for name in connections:
+                result.append(Resource(
+                    uri=f"agent://{agent_name}/connections/{name}",
+                    name=f"connections / {name}",
+                    mime_type="text/markdown",
+                ))
         return result
 
     async def on_read_resource(self, context, call_next):
@@ -210,6 +280,7 @@ async def status_route(request: Request) -> JSONResponse:
         "name": config.get("name", PROJECT_DIR.name),
         "project_dir": str(PROJECT_DIR.resolve()),
         "sessions": list(SESSIONS.values()),
+        "stale": check_staleness(force=True),
     })
 
 

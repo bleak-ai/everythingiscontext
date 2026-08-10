@@ -24,6 +24,7 @@ def _to_out(t: Template) -> AdminWorkflowOut:
         submitted_at=t.submitted_at,
         reviewed_at=t.reviewed_at,
         file_count=len(t.files),
+        downloads=t.downloads,
     )
 
 
