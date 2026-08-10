@@ -32,6 +32,7 @@ from starlette.responses import JSONResponse
 from . import commands as commands_mod
 from . import exec as exec_mod
 from . import fs
+from . import registry as registry_mod
 from . import secrets as secrets_mod
 from . import state
 
@@ -434,6 +435,90 @@ def run_adhoc_script(
     return _exec_result(exec_mod.run_adhoc_script(PROJECT_DIR, code, params=params))
 
 
+
+
+def _register_module_commands(module_id: str):
+    commands_mod.register_module_commands(mcp, PROJECT_DIR, module_id)
+
+
+def _notify_prompts_changed():
+    try:
+        import asyncio
+        from fastmcp.server.dependencies import get_context
+        ctx = get_context()
+        session = getattr(ctx, "session", None)
+        if session and hasattr(session, "send_prompt_list_changed"):
+            loop = asyncio.get_running_loop()
+            loop.create_task(session.send_prompt_list_changed())
+    except Exception:
+        pass
+
+
+@mcp.tool(description=_tool_doc("workflow"), output_schema=None)
+def workflow(action: str, id: str = "", query: str = "") -> str:
+    if action == "search":
+        try:
+            entries = registry_mod.search_catalog(query)
+        except (registry_mod.RegistryError, ValueError) as e:
+            return f"Error: {e}."
+        if not entries:
+            return f"No workflows match '{query}'."
+        lines = []
+        for e in entries:
+            tags = ", ".join(e.get("tags", []))
+            lines.append(f"{e['id']}: {e['name']}")
+            if e.get("description"):
+                lines.append(f"  {e['description']}")
+            if tags:
+                lines.append(f"  tags: {tags}")
+            lines.append("")
+        lines.append('Install one with workflow(action="install", id="<id>")')
+        return "\n".join(lines)
+
+    elif action == "install":
+        if not id:
+            return "Error: install needs an id."
+        try:
+            result = registry_mod.install_workflow(PROJECT_DIR, id)
+        except (registry_mod.RegistryError, ValueError) as e:
+            return f"Error: {e}."
+        _register_module_commands(result["id"])
+        _notify_prompts_changed()
+        snapshot_startup_files()
+        return (
+            f"Installed {result['name']} ({result['count']} files) at {result['path']}/.\n"
+            f"Next step: run the setup in {result['path']}/commands/setup.md"
+        )
+
+    elif action == "check":
+        try:
+            if id:
+                module_dir = PROJECT_DIR / "modules" / id
+                if not module_dir.is_dir():
+                    return f"Error: modules/{id} does not exist."
+                reports = [registry_mod.check_workflow(PROJECT_DIR, id)]
+            else:
+                reports = registry_mod.check_all(PROJECT_DIR)
+        except (registry_mod.RegistryError, ValueError) as e:
+            return f"Error: {e}."
+        if not reports:
+            return f"No installed workflows track a template (no {registry_mod.MANIFEST_NAME} files found)."
+        return "\n".join(registry_mod.format_check_report(r) for r in reports)
+
+    elif action == "update":
+        if not id:
+            return "Error: update needs an id."
+        try:
+            report = registry_mod.update_workflow(PROJECT_DIR, id)
+        except (registry_mod.RegistryError, ValueError) as e:
+            return f"Error: {e}."
+        if report.get("commands_changed"):
+            _register_module_commands(report["id"])
+            _notify_prompts_changed()
+            snapshot_startup_files()
+        return registry_mod.format_update_report(report)
+
+    return f"Error: unknown action '{action}'. Use search, install, check, or update."
 
 
 from . import dashboard  # noqa: E402,F401  registers /api/* and the static catch-all

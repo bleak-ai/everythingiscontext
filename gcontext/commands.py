@@ -158,29 +158,51 @@ def register_framework_prompts(mcp) -> int:
     return count
 
 
+def _register_one(mcp, root: Path, path: Path) -> bool:
+    """Register a single command file as a prompt. Returns True on success."""
+    from fastmcp.prompts.prompt import Prompt
+
+    owner = path.parent.parent.name
+    name = f"{owner}__{path.stem}"
+    try:
+        text = path.read_text(encoding="utf-8")
+        if path.suffix == ".md":
+            meta, body = parse_command(text)
+        else:
+            meta = parse_script_command(text)
+            body = _script_prompt_body(str(path.relative_to(root)), meta)
+        fn = _render_fn(body, meta.get("parameters") or [])
+        fn.__name__ = name
+        mcp.add_prompt(
+            Prompt.from_function(fn, name=name, description=meta.get("description", ""))
+        )
+    except (ValueError, KeyError, yaml.YAMLError) as e:
+        print(f"  ! skipping command {path}: {e}", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"  ! could not register prompt {name}: {e}", file=sys.stderr)
+        return False
+    return True
+
+
 def register_commands(mcp, root: Path) -> int:
     """Scan connection and module `commands/` folders and register each file
     as a prompt named `<owner>__<command>`."""
-    from fastmcp.prompts.prompt import Prompt
-
     count = 0
     for path in discover(root):
-        owner = path.parent.parent.name
-        name = f"{owner}__{path.stem}"
-        try:
-            text = path.read_text(encoding="utf-8")
-            if path.suffix == ".md":
-                meta, body = parse_command(text)
-            else:
-                meta = parse_script_command(text)
-                body = _script_prompt_body(str(path.relative_to(root)), meta)
-            fn = _render_fn(body, meta.get("parameters") or [])
-            fn.__name__ = name
-            mcp.add_prompt(
-                Prompt.from_function(fn, name=name, description=meta.get("description", ""))
-            )
-        except (ValueError, KeyError, yaml.YAMLError) as e:
-            print(f"  ! skipping command {path}: {e}", file=sys.stderr)
-            continue
-        count += 1
+        if _register_one(mcp, root, path):
+            count += 1
+    return count
+
+
+def register_module_commands(mcp, root: Path, module_name: str) -> int:
+    """Register commands for a single module (e.g. after install or update)."""
+    commands_dir = root / "modules" / module_name / "commands"
+    if not commands_dir.is_dir():
+        return 0
+    count = 0
+    for path in sorted(commands_dir.glob("*")):
+        if path.suffix in (".md", ".py"):
+            if _register_one(mcp, root, path):
+                count += 1
     return count

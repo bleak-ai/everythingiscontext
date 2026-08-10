@@ -130,7 +130,9 @@ Never ships, generated locally at setup and use:
 - the user's own run folders in `runs/`
 - every personalized file: configs, credentials references, scripts bound to the user's systems, playbooks learned from the user's own work
 
-Installs are snapshots. The user's copy is theirs: personalized, growing, never overwritten by an update. `gcontext add` on an existing module warns and stops instead of overwriting.
+On install, `gcontext add` writes a `.template.yaml` file inside the module. It records per-file SHA256 hashes of every shipped file, the registry source, and the install ref. This manifest is hidden from `list_dir`, `grep`, and resource listings (same policy as `.git`), but stays readable by explicit path. `gcontext update <id>` (or the `workflow` tool's update action) uses it to pull upstream changes without touching personalized files: unchanged-locally files get the upstream version, locally-modified files are kept, files changed on both sides get the upstream version written as `<file>.new` for the agent to merge. Your runs, insights, and personal state are never in the manifest and are never touched.
+
+`gcontext add` on an existing module warns and stops instead of overwriting.
 
 ## The example run
 

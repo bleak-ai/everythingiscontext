@@ -1,21 +1,20 @@
 """gcontext CLI. One server you start, clients connect to its URL. State is files."""
 
 import argparse
-import io
 import json
 import os
 import re
 import shutil
 import socket
 import sys
-import tarfile
 import urllib.error
 import urllib.request
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from . import __version__
 from . import exec as exec_mod
 from . import ledger as ledger_mod
+from . import registry as registry_mod
 from . import secrets as secrets_mod
 from . import server
 from . import state
@@ -27,11 +26,6 @@ YELLOW = "\033[33m"
 RESET = "\033[0m"
 
 DEFAULT_PORT = 4242
-
-# GitHub registry: "owner/repo@ref" or a full "https://..." URL to a .tar.gz.
-# The env var GCONTEXT_REGISTRY accepts both forms. A full URL is useful for
-# tests: serve a local tarball over HTTP and point the env var at it.
-DEFAULT_REGISTRY = "bleak-ai/workflows@main"
 
 STATUS_COLOR = {
     "loaded": GREEN,
@@ -415,210 +409,23 @@ def cmd_context(args):
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
-def _parse_registry() -> str:
-    """Return the tarball URL for the configured registry.
-
-    GCONTEXT_REGISTRY accepts two forms:
-      - "owner/repo@ref"  -> fetches from GitHub codeload
-      - "https://..."      -> used as-is (for tests serving a local tarball)
-    """
-    reg = os.environ.get("GCONTEXT_REGISTRY", DEFAULT_REGISTRY)
-    if reg.startswith("http://") or reg.startswith("https://"):
-        return reg
-    return _codeload_url(reg)
-
-
-def _codeload_url(spec: str) -> str:
-    """Build https://codeload.github.com/<owner>/<repo>/tar.gz/refs/heads/<ref>."""
-    if "@" in spec:
-        repo_part, ref = spec.rsplit("@", 1)
-    else:
-        repo_part, ref = spec, "main"
-    return f"https://codeload.github.com/{repo_part}/tar.gz/refs/heads/{ref}"
-
-
-def _download_tarball(url: str) -> tarfile.TarFile:
-    """Download a tarball into memory and return an open TarFile. Exits on failure."""
-    try:
-        with urllib.request.urlopen(url, timeout=30) as resp:
-            data = resp.read()
-    except (urllib.error.HTTPError, urllib.error.URLError, OSError):
-        print("Error: could not reach GitHub.", file=sys.stderr)
-        sys.exit(1)
-    return tarfile.open(fileobj=io.BytesIO(data), mode="r:gz")
-
-
-def _extract_files(tf: tarfile.TarFile, subpath: str = "") -> list[dict]:
-    """Extract regular files from the tarball into [{path, content}].
-
-    The first path component (the repo-ref prefix GitHub adds) is stripped
-    generically. If subpath is given, only members under that prefix are
-    returned, with the prefix removed. Symlinks and non-regular files are
-    skipped. Non-UTF-8 files emit a warning to stderr and are skipped.
-    """
-    files = []
-    for member in tf.getmembers():
-        if not member.isfile():
-            continue
-        if member.issym() or member.islnk():
-            continue
-        parts = PurePosixPath(member.name).parts
-        if len(parts) < 2:
-            continue
-        # Strip the first component (e.g. "workflows-main/")
-        rel = str(PurePosixPath(*parts[1:]))
-        if subpath:
-            norm = subpath.rstrip("/") + "/"
-            if not (rel + "/").startswith(norm) and rel != subpath.rstrip("/"):
-                continue
-            rel = rel[len(norm):] if rel.startswith(norm) else ""
-            if not rel:
-                continue
-        try:
-            raw = tf.extractfile(member)
-            if raw is None:
-                continue
-            content = raw.read().decode("utf-8")
-        except (UnicodeDecodeError, ValueError):
-            print(f"Skipping {rel}: not a text file.", file=sys.stderr)
-            continue
-        files.append({"path": rel, "content": content})
-    return files
-
-
-def _parse_github_url(url: str) -> tuple[str, str, str]:
-    """Parse a GitHub URL into (owner/repo, ref, subpath).
-
-    Accepted forms:
-      https://github.com/owner/repo
-      https://github.com/owner/repo/tree/ref
-      https://github.com/owner/repo/tree/ref/sub/path
-      github.com/owner/repo (no scheme)
-    """
-    cleaned = url
-    if cleaned.startswith("github.com/"):
-        cleaned = "https://" + cleaned
-    # Remove scheme + host
-    path = cleaned.split("github.com/", 1)[1] if "github.com/" in cleaned else ""
-    segments = path.strip("/").split("/")
-    if len(segments) < 2:
-        print(f"Error: cannot parse GitHub URL: {url}", file=sys.stderr)
-        sys.exit(1)
-    owner_repo = f"{segments[0]}/{segments[1]}"
-    ref = "main"
-    subpath = ""
-    if len(segments) > 3 and segments[2] == "tree":
-        ref = segments[3]
-        if len(segments) > 4:
-            subpath = "/".join(segments[4:])
-    return owner_repo, ref, subpath
-
-
-def fetch_workflow_by_id(workflow_id: str) -> list[dict]:
-    """Fetch a workflow by id from the configured registry. Returns [{path, content}]."""
-    url = _parse_registry()
-    tf = _download_tarball(url)
-    all_files = _extract_files(tf)
-    # Find files under the top-level folder matching the id
-    prefix = workflow_id + "/"
-    matched = []
-    for f in all_files:
-        if f["path"].startswith(prefix):
-            matched.append({"path": f["path"][len(prefix):], "content": f["content"]})
-        elif f["path"] == workflow_id:
-            # single file at top level (unlikely but handle it)
-            matched.append({"path": f["path"], "content": f["content"]})
-    if not matched:
-        print(f"Error: no workflow '{workflow_id}' found in the registry.", file=sys.stderr)
-        print("Browse available workflows:", file=sys.stderr)
-        print("  https://github.com/bleak-ai/workflows", file=sys.stderr)
-        print("  https://gcontext.ai/workflows/", file=sys.stderr)
-        sys.exit(1)
-    return matched
-
-
-def fetch_workflow_by_url(url: str) -> list[dict]:
-    """Fetch a workflow from a GitHub repo URL. Returns [{path, content}].
-
-    Accepts https://github.com/<owner>/<repo>[/tree/<ref>[/<subpath>]] or
-    a direct http(s):// URL to a .tar.gz (useful for testing).
-    """
-    if "github.com/" in url or url.startswith("github.com/"):
-        owner_repo, ref, subpath = _parse_github_url(url)
-        tarball_url = _codeload_url(f"{owner_repo}@{ref}")
-    else:
-        # Direct tarball URL (e.g. local test server)
-        tarball_url = url
-        subpath = ""
-    tf = _download_tarball(tarball_url)
-    files = _extract_files(tf, subpath=subpath)
-    if not files:
-        print(f"Error: no files found at {url}.", file=sys.stderr)
-        sys.exit(1)
-    return files
-
-
-def validate_bundle(files) -> dict:
-    """Check paths and the index.md manifest; return the parsed frontmatter.
-
-    Raises ValueError on any problem. Runs entirely in memory so a bad
-    bundle never leaves files behind.
-    """
-    from .commands import parse_command
-
-    if not isinstance(files, list) or not files:
-        raise ValueError("the bundle has no files")
-    for f in files:
-        path = f.get("path") or ""
-        parts = PurePosixPath(path).parts
-        if not path or path.startswith("/") or "\\" in path or ".." in parts:
-            raise ValueError(f"unsafe file path in bundle: {path!r}")
-    index = next((f for f in files if f["path"] == "index.md"), None)
-    if index is None:
-        raise ValueError("the bundle has no index.md")
-    try:
-        meta, _ = parse_command(index["content"])
-    except ValueError as e:
-        raise ValueError(f"index.md frontmatter: {e}")
-    for field in ("id", "name", "description"):
-        if not meta.get(field):
-            raise ValueError(f"index.md frontmatter is missing '{field}'")
-    return meta
-
-
-def _is_url_source(source: str) -> bool:
-    """Return True when the source looks like a URL rather than a plain id."""
-    return "://" in source or source.startswith("github.com/")
-
-
 def cmd_add(args):
     project_dir = find_project_dir(args.project)
     source = args.source
 
-    if _is_url_source(source):
-        files = fetch_workflow_by_url(source)
-    else:
-        files = fetch_workflow_by_id(source)
-
     try:
-        meta = validate_bundle(files)
-    except ValueError as e:
-        print(f"Error: invalid workflow bundle: {e}", file=sys.stderr)
+        result = registry_mod.install_workflow(project_dir, source)
+    except (registry_mod.RegistryError, ValueError) as e:
+        msg = str(e)
+        print(f"Error: {msg}", file=sys.stderr)
+        if "no workflow" in msg:
+            print("Browse available workflows:", file=sys.stderr)
+            print("  https://github.com/bleak-ai/workflows", file=sys.stderr)
+            print("  https://gcontext.ai/workflows/", file=sys.stderr)
         sys.exit(1)
 
-    module_dir = project_dir / "modules" / meta["id"]
-    if module_dir.exists():
-        print(f"Error: module '{meta['id']}' already exists at {module_dir}.", file=sys.stderr)
-        print("Installs are snapshots: your copy is personalized and is never overwritten.", file=sys.stderr)
-        sys.exit(1)
-
-    for f in files:
-        dest = module_dir / f["path"]
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(f["content"])
-
-    rel = f"modules/{meta['id']}"
-    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} installed {meta['name']} ({len(files)} files) at {rel}/")
+    rel = result["path"]
+    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} installed {result['name']} ({result['count']} files) at {rel}/")
     print()
     print("Next step: personalize it. (Re)start the server and tell your agent:")
     print(f"  \"Run the setup in {rel}/commands/setup.md\"")
@@ -718,6 +525,43 @@ def cmd_share(args):
         print(f'  gh pr create --title "Add {wid}" --body "New workflow: {meta["name"]}"')
 
 
+def cmd_update(args):
+    project_dir = find_project_dir(args.project)
+    try:
+        report = registry_mod.update_workflow(project_dir, args.id)
+    except (registry_mod.RegistryError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(registry_mod.format_update_report(report))
+    if report.get("conflicts"):
+        print()
+        print("Resolve each conflict: merge <file>.new into <file>, then delete the .new file.")
+    if report.get("commands_changed"):
+        print()
+        print("Commands changed: restart the server to re-register them (stop, gcontext up, reconnect the client).")
+
+
+def cmd_search(args):
+    try:
+        entries = registry_mod.search_catalog(args.query or "")
+    except (registry_mod.RegistryError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if not entries:
+        print(f"No workflows match '{args.query}'.")
+        return
+
+    for e in entries:
+        tags = ", ".join(e.get("tags", []))
+        print(f"  {e['id']}  {e['name']}  [{tags}]")
+        if e.get("description"):
+            print(f"    {DIM}{e['description']}{RESET}")
+    print()
+    print(f"Install: gcontext add <id>")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="gcontext",
@@ -759,6 +603,13 @@ def main():
     share_parser = subparsers.add_parser("share", help="Validate a workflow template and show how to submit it via PR")
     share_parser.add_argument("module_path", help="Path to the template folder")
 
+    update_parser = subparsers.add_parser("update", help="Update an installed workflow from the registry")
+    update_parser.add_argument("id", help="Workflow id (the modules/ folder name)")
+    update_parser.add_argument("project", nargs="?", help="Path to gcontext project directory")
+
+    search_parser = subparsers.add_parser("search", help="Search the workflow registry")
+    search_parser.add_argument("query", nargs="?", default="", help="Substring to match against id, name, description, tags")
+
     args = parser.parse_args()
 
     commands = {
@@ -769,6 +620,8 @@ def main():
         "context": cmd_context,
         "add": cmd_add,
         "share": cmd_share,
+        "update": cmd_update,
+        "search": cmd_search,
     }
     if args.command in commands:
         commands[args.command](args)

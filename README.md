@@ -166,6 +166,8 @@ Developing the dashboard itself needs node: `make web-dev` runs a Vite dev serve
 | `gcontext status [dir]` | Server state, connected clients, state overview |
 | `gcontext connect [client]` | Connection steps for claude, desktop, codex, cursor |
 | `gcontext add <id>` | Install a workflow from the registry repo ([github.com/bleak-ai/workflows](https://github.com/bleak-ai/workflows)) or from any public GitHub repo folder via `gcontext add <github-url>` |
+| `gcontext update <id>` | Update an installed workflow from the registry (three-way merge: keeps your local changes, writes `.new` files on conflicts) |
+| `gcontext search [query]` | Search the workflow registry by name, description, or tags |
 | `gcontext share <path>` | Validate a workflow template folder and print the steps to submit it as a pull request to the registry |
 | `gcontext context [dir]` | Print the context ledger |
 

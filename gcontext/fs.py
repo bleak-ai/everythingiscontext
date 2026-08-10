@@ -14,6 +14,7 @@ from pathlib import Path
 # Machine folders: never served to the dashboard browser, skipped by
 # list_dir and grep.
 SKIP_DIRS = {".venv", ".git", "__pycache__", "node_modules"}
+SKIP_FILES = {".template.yaml"}
 BROWSER_BLOCKED = SKIP_DIRS
 
 GREP_MAX_MATCHES = 100
@@ -62,7 +63,7 @@ def walk_files(root: Path) -> list[str]:
         parts = f.relative_to(resolved).parts
         if (SKIP_DIRS | {"archive"}) & set(parts):
             continue
-        if f.name == "secrets.env":
+        if f.name == "secrets.env" or f.name in SKIP_FILES:
             continue
         out.append("/".join(parts))
     return out
@@ -88,7 +89,7 @@ def _index_siblings(folder: Path) -> list[str]:
     """
     names = []
     for entry in sorted(folder.iterdir(), key=lambda e: e.name):
-        if entry.name in SKIP_DIRS | {"index.md", "secrets.env", "archive"}:
+        if entry.name in SKIP_DIRS | SKIP_FILES | {"index.md", "secrets.env", "archive"}:
             continue
         names.append(entry.name)
     return names
@@ -208,6 +209,8 @@ def list_dir(root: Path, path: str = ".") -> str:
     for entry in sorted(target.iterdir(), key=lambda e: e.name):
         if entry.name in SKIP_DIRS:
             continue
+        if entry.is_file() and entry.name in SKIP_FILES:
+            continue
         if entry.is_dir():
             dirs.append(f"{entry.name}/")
         else:
@@ -240,7 +243,7 @@ def grep(root: Path, pattern: str, path: str = ".", glob: str = "") -> str:
         rel_parts = f.relative_to(resolved_root).parts
         if SKIP_DIRS & set(rel_parts):
             continue
-        if f.name == "secrets.env":
+        if f.name == "secrets.env" or f.name in SKIP_FILES:
             continue
         if glob and not fnmatch.fnmatch(f.name, glob):
             continue
