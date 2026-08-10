@@ -1,14 +1,17 @@
-"""gcontext CLI. One server you start, harnesses connect to its URL. State is files."""
+"""gcontext CLI. One server you start, clients connect to its URL. State is files."""
 
 import argparse
+import io
 import json
 import os
 import re
+import shutil
 import socket
 import sys
+import tarfile
 import urllib.error
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from . import __version__
 from . import exec as exec_mod
@@ -24,7 +27,11 @@ YELLOW = "\033[33m"
 RESET = "\033[0m"
 
 DEFAULT_PORT = 4242
-DEFAULT_API_URL = "https://api.gcontext.ai"
+
+# GitHub registry: "owner/repo@ref" or a full "https://..." URL to a .tar.gz.
+# The env var GCONTEXT_REGISTRY accepts both forms. A full URL is useful for
+# tests: serve a local tarball over HTTP and point the env var at it.
+DEFAULT_REGISTRY = "bleak-ai/workflows@main"
 
 STATUS_COLOR = {
     "loaded": GREEN,
@@ -82,11 +89,11 @@ uv tool install gcontext-ai                       # once
 gcontext up .                 # from this folder (or: gcontext up <path> from anywhere)
 ```
 
-The server prints a URL and the one-line command to connect your harness
-(Claude Code, Claude Desktop, Codex, Cursor). The harness does the reasoning;
+The server prints a URL and the one-line command to connect your client
+(Claude Code, Claude Desktop, Codex, Cursor). The client does the reasoning;
 this folder is the memory.
 
-What's here: `agent.md` is the agent's definition, pushed to every harness at
+What's here: `agent.md` is the agent's definition, pushed to every client at
 connect. `connections/` holds the services it can use, `modules/` its knowledge
 by topic, `archive/` retired state. `secrets.env` holds secret values; it is
 gitignored and never leaves this machine, so after cloning, recreate it from
@@ -115,6 +122,8 @@ def cmd_init(args):
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(content)
 
+    (target / "secrets.env").chmod(0o600)
+
     print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} created {name} at {target}")
     print()
     print("The folder IS your agent's state: version it with git, edit it freely.")
@@ -122,8 +131,8 @@ def cmd_init(args):
     pad = min(max(len(f"gcontext up {args.directory}"), len(f"/mcp__{name}__setup")) + 4, 44)
     print("Next steps:")
     print(f"  1. {f'gcontext up {args.directory}':<{pad}}  start the server")
-    print(f"  2. {'connect your harness':<{pad}}  the up banner prints the exact command per harness")
-    print(f"  3. {f'/mcp__{name}__setup':<{pad}}  in the harness: describe what the agent should do, it builds the rest")
+    print(f"  2. {'connect your client':<{pad}}  the up banner prints the exact command per client")
+    print(f"  3. {f'/mcp__{name}__setup':<{pad}}  in the client: describe what the agent should do, it builds the rest")
     print()
     print(f"{DIM}See what reaches the agent, anytime: gcontext context {args.directory}{RESET}")
 
@@ -223,6 +232,7 @@ def cmd_up(args):
     n_framework_prompts = server.register_framework_prompts()
     n_commands = server.register_commands()
     n_base_lines, n_instruction_lines = server.load_instructions()
+    server.snapshot_startup_files()
 
     print(f"{BOLD}gcontext{RESET} {DIM}{__version__} -{RESET} {name}")
     print(f"{DIM}State: {project_dir}{RESET}")
@@ -230,7 +240,12 @@ def cmd_up(args):
     print(f"Serving at {BOLD}{url}{RESET}")
     print(f"Dashboard:  http://127.0.0.1:{port}/")
     print()
-    print("Connect a harness (once per harness, works from any directory):")
+    env_file = project_dir / "secrets.env"
+    if env_file.exists() and (env_file.stat().st_mode & 0o077):
+        print(f"{DIM}note: secrets.env is readable by other users on this machine; consider: chmod 600 secrets.env{RESET}")
+        print()
+
+    print("Connect a client (once per client, works from any directory):")
     print(f"  Claude Code:     claude mcp add --transport http {name} {url}")
     print(f"  Claude Desktop:  Settings -> Connectors -> Add custom connector -> {url}")
     print(f'  Cursor:          "{name}": {{"url": "{url}"}} in ~/.cursor/mcp.json')
@@ -246,8 +261,8 @@ def cmd_up(args):
         prompt_bits.append(f"{n_commands} project command(s)")
     print(f"Prompts: {' + '.join(prompt_bits)} as MCP prompts (slash commands in Claude Code).")
     print()
-    print("Connections appear below as harnesses attach. Ctrl+C stops the server,")
-    print("and every harness cleanly loses access.")
+    print("Connections appear below as clients attach. Ctrl+C stops the server,")
+    print("and every client cleanly loses access.")
     print()
 
     server.mcp.run(
@@ -283,9 +298,14 @@ def cmd_status(args):
         print(f"Server: {GREEN}up{RESET} at {server_url(port)}")
         sessions = live.get("sessions", [])
         if not sessions:
-            print(f"  {DIM}no harness connected yet{RESET}")
+            print(f"  {DIM}no client connected yet{RESET}")
         for s in sessions:
             print(f"  {GREEN}{s['client']}{RESET} {DIM}{s['version']}{RESET}  connected {s['connected']}  last activity {s['last_seen']}")
+        stale = live.get("stale") or {}
+        if stale.get("agent_md"):
+            print(f"  {YELLOW}agent.md changed since server start; restart to push the new version{RESET}")
+        if stale.get("commands"):
+            print(f"  {YELLOW}commands changed since server start; restart to re-register them{RESET}")
     print()
 
     instructions = project_dir / "agent.md"
@@ -395,29 +415,147 @@ def cmd_context(args):
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
-def resolve_api_url(args) -> str:
-    if getattr(args, "api_url", None):
-        return args.api_url.rstrip("/")
-    return os.environ.get("GCONTEXT_API_URL", DEFAULT_API_URL).rstrip("/")
+def _parse_registry() -> str:
+    """Return the tarball URL for the configured registry.
+
+    GCONTEXT_REGISTRY accepts two forms:
+      - "owner/repo@ref"  -> fetches from GitHub codeload
+      - "https://..."      -> used as-is (for tests serving a local tarball)
+    """
+    reg = os.environ.get("GCONTEXT_REGISTRY", DEFAULT_REGISTRY)
+    if reg.startswith("http://") or reg.startswith("https://"):
+        return reg
+    return _codeload_url(reg)
 
 
-def fetch_workflow(workflow_id: str) -> dict:
-    """Fetch one approved template bundle from the workflows API. Exits on failure."""
-    base = os.environ.get("GCONTEXT_API_URL", DEFAULT_API_URL).rstrip("/")
-    url = f"{base}/api/workflows/{workflow_id}"
+def _codeload_url(spec: str) -> str:
+    """Build https://codeload.github.com/<owner>/<repo>/tar.gz/refs/heads/<ref>."""
+    if "@" in spec:
+        repo_part, ref = spec.rsplit("@", 1)
+    else:
+        repo_part, ref = spec, "main"
+    return f"https://codeload.github.com/{repo_part}/tar.gz/refs/heads/{ref}"
+
+
+def _download_tarball(url: str) -> tarfile.TarFile:
+    """Download a tarball into memory and return an open TarFile. Exits on failure."""
     try:
         with urllib.request.urlopen(url, timeout=30) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            print(f"Error: no published workflow with id '{workflow_id}'.", file=sys.stderr)
-            print("Browse the directory at https://gcontext.ai/workflows/", file=sys.stderr)
-        else:
-            print(f"Error: the workflows API answered {e.code} for {url}.", file=sys.stderr)
+            data = resp.read()
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError):
+        print("Error: could not reach GitHub.", file=sys.stderr)
         sys.exit(1)
-    except (urllib.error.URLError, OSError, ValueError):
-        print(f"Error: could not reach the workflows API at {url}.", file=sys.stderr)
+    return tarfile.open(fileobj=io.BytesIO(data), mode="r:gz")
+
+
+def _extract_files(tf: tarfile.TarFile, subpath: str = "") -> list[dict]:
+    """Extract regular files from the tarball into [{path, content}].
+
+    The first path component (the repo-ref prefix GitHub adds) is stripped
+    generically. If subpath is given, only members under that prefix are
+    returned, with the prefix removed. Symlinks and non-regular files are
+    skipped. Non-UTF-8 files emit a warning to stderr and are skipped.
+    """
+    files = []
+    for member in tf.getmembers():
+        if not member.isfile():
+            continue
+        if member.issym() or member.islnk():
+            continue
+        parts = PurePosixPath(member.name).parts
+        if len(parts) < 2:
+            continue
+        # Strip the first component (e.g. "workflows-main/")
+        rel = str(PurePosixPath(*parts[1:]))
+        if subpath:
+            norm = subpath.rstrip("/") + "/"
+            if not (rel + "/").startswith(norm) and rel != subpath.rstrip("/"):
+                continue
+            rel = rel[len(norm):] if rel.startswith(norm) else ""
+            if not rel:
+                continue
+        try:
+            raw = tf.extractfile(member)
+            if raw is None:
+                continue
+            content = raw.read().decode("utf-8")
+        except (UnicodeDecodeError, ValueError):
+            print(f"Skipping {rel}: not a text file.", file=sys.stderr)
+            continue
+        files.append({"path": rel, "content": content})
+    return files
+
+
+def _parse_github_url(url: str) -> tuple[str, str, str]:
+    """Parse a GitHub URL into (owner/repo, ref, subpath).
+
+    Accepted forms:
+      https://github.com/owner/repo
+      https://github.com/owner/repo/tree/ref
+      https://github.com/owner/repo/tree/ref/sub/path
+      github.com/owner/repo (no scheme)
+    """
+    cleaned = url
+    if cleaned.startswith("github.com/"):
+        cleaned = "https://" + cleaned
+    # Remove scheme + host
+    path = cleaned.split("github.com/", 1)[1] if "github.com/" in cleaned else ""
+    segments = path.strip("/").split("/")
+    if len(segments) < 2:
+        print(f"Error: cannot parse GitHub URL: {url}", file=sys.stderr)
         sys.exit(1)
+    owner_repo = f"{segments[0]}/{segments[1]}"
+    ref = "main"
+    subpath = ""
+    if len(segments) > 3 and segments[2] == "tree":
+        ref = segments[3]
+        if len(segments) > 4:
+            subpath = "/".join(segments[4:])
+    return owner_repo, ref, subpath
+
+
+def fetch_workflow_by_id(workflow_id: str) -> list[dict]:
+    """Fetch a workflow by id from the configured registry. Returns [{path, content}]."""
+    url = _parse_registry()
+    tf = _download_tarball(url)
+    all_files = _extract_files(tf)
+    # Find files under the top-level folder matching the id
+    prefix = workflow_id + "/"
+    matched = []
+    for f in all_files:
+        if f["path"].startswith(prefix):
+            matched.append({"path": f["path"][len(prefix):], "content": f["content"]})
+        elif f["path"] == workflow_id:
+            # single file at top level (unlikely but handle it)
+            matched.append({"path": f["path"], "content": f["content"]})
+    if not matched:
+        print(f"Error: no workflow '{workflow_id}' found in the registry.", file=sys.stderr)
+        print("Browse available workflows:", file=sys.stderr)
+        print("  https://github.com/bleak-ai/workflows", file=sys.stderr)
+        print("  https://gcontext.ai/workflows/", file=sys.stderr)
+        sys.exit(1)
+    return matched
+
+
+def fetch_workflow_by_url(url: str) -> list[dict]:
+    """Fetch a workflow from a GitHub repo URL. Returns [{path, content}].
+
+    Accepts https://github.com/<owner>/<repo>[/tree/<ref>[/<subpath>]] or
+    a direct http(s):// URL to a .tar.gz (useful for testing).
+    """
+    if "github.com/" in url or url.startswith("github.com/"):
+        owner_repo, ref, subpath = _parse_github_url(url)
+        tarball_url = _codeload_url(f"{owner_repo}@{ref}")
+    else:
+        # Direct tarball URL (e.g. local test server)
+        tarball_url = url
+        subpath = ""
+    tf = _download_tarball(tarball_url)
+    files = _extract_files(tf, subpath=subpath)
+    if not files:
+        print(f"Error: no files found at {url}.", file=sys.stderr)
+        sys.exit(1)
+    return files
 
 
 def validate_bundle(files) -> dict:
@@ -426,8 +564,6 @@ def validate_bundle(files) -> dict:
     Raises ValueError on any problem. Runs entirely in memory so a bad
     bundle never leaves files behind.
     """
-    from pathlib import PurePosixPath
-
     from .commands import parse_command
 
     if not isinstance(files, list) or not files:
@@ -450,11 +586,22 @@ def validate_bundle(files) -> dict:
     return meta
 
 
+def _is_url_source(source: str) -> bool:
+    """Return True when the source looks like a URL rather than a plain id."""
+    return "://" in source or source.startswith("github.com/")
+
+
 def cmd_add(args):
     project_dir = find_project_dir(args.project)
-    bundle = fetch_workflow(args.workflow_id)
+    source = args.source
+
+    if _is_url_source(source):
+        files = fetch_workflow_by_url(source)
+    else:
+        files = fetch_workflow_by_id(source)
+
     try:
-        meta = validate_bundle(bundle.get("files"))
+        meta = validate_bundle(files)
     except ValueError as e:
         print(f"Error: invalid workflow bundle: {e}", file=sys.stderr)
         sys.exit(1)
@@ -465,17 +612,16 @@ def cmd_add(args):
         print("Installs are snapshots: your copy is personalized and is never overwritten.", file=sys.stderr)
         sys.exit(1)
 
-    for f in bundle["files"]:
+    for f in files:
         dest = module_dir / f["path"]
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(f["content"])
 
     rel = f"modules/{meta['id']}"
-    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} installed {meta['name']} ({len(bundle['files'])} files) at {rel}/")
+    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} installed {meta['name']} ({len(files)} files) at {rel}/")
     print()
-    print("Next step: personalize it. Tell your agent to run the setup in")
-    print(f"  {rel}/commands/setup.md")
-    print(f"{DIM}(Re)start the server and the setup is also an MCP prompt: a slash command in Claude Code.{RESET}")
+    print("Next step: personalize it. (Re)start the server and tell your agent:")
+    print(f"  \"Run the setup in {rel}/commands/setup.md\"")
 
 
 def validate_template(folder: Path) -> dict:
@@ -544,10 +690,6 @@ def bundle_files(folder: Path) -> list[dict]:
 
 
 def cmd_share(args):
-    if args.status:
-        _share_status(args)
-        return
-
     folder = Path(args.module_path).resolve()
     if not folder.is_dir():
         print(f"Error: {args.module_path} is not a directory.", file=sys.stderr)
@@ -556,77 +698,24 @@ def cmd_share(args):
     meta = validate_template(folder)
     files = bundle_files(folder)
     wid = meta["id"]
-    base = resolve_api_url(args)
 
-    existing = False
-    try:
-        with urllib.request.urlopen(f"{base}/api/workflows/{wid}", timeout=10) as resp:
-            if resp.status == 200:
-                existing = True
-    except (urllib.error.HTTPError, urllib.error.URLError, OSError):
-        pass
-
-    if existing and not args.yes:
-        print(f"Warning: '{wid}' is already published. A new submission replaces any")
-        print("pending entry and enters the review queue.")
-        answer = input("Continue? [y/N] ").strip()
-        if answer.lower() != "y":
-            print("Aborted.", file=sys.stderr)
-            sys.exit(1)
-
-    payload = json.dumps({"files": files}).encode("utf-8")
-    req = urllib.request.Request(
-        f"{base}/api/workflows",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        try:
-            detail = json.loads(body).get("detail", body)
-        except (json.JSONDecodeError, AttributeError):
-            detail = body
-        print(f"Error: the API rejected the submission: {detail}", file=sys.stderr)
-        sys.exit(1)
-    except (urllib.error.URLError, OSError):
-        print(f"Error: could not reach the API at {base}.", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} submitted {wid} ({len(files)} files)")
+    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} validated {wid} ({len(files)} files)")
     print()
-    print(f"Status: {result.get('status', 'pending')} (under review)")
-    print(f"Check status: gcontext share --status {wid}")
-
-
-def _share_status(args):
-    wid = args.module_path
-    base = resolve_api_url(args)
-    url = f"{base}/api/workflows/{wid}/status"
-    try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            data = json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            print(f"Error: no submission found for '{wid}'.", file=sys.stderr)
-        else:
-            print(f"Error: the API answered {e.code}.", file=sys.stderr)
-        sys.exit(1)
-    except (urllib.error.URLError, OSError):
-        print(f"Error: could not reach the API at {base}.", file=sys.stderr)
-        sys.exit(1)
-
-    submitted = data.get("submitted_at", "")[:16].replace("T", " ") + " UTC" if data.get("submitted_at") else "-"
-    reviewed = data.get("reviewed_at", "")[:16].replace("T", " ") + " UTC" if data.get("reviewed_at") else "-"
-
-    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {wid}")
+    print("To publish this workflow, open a PR against the registry:")
+    print("  https://github.com/bleak-ai/workflows")
     print()
-    print(f"Status: {data['status']}")
-    print(f"Submitted: {submitted}")
-    print(f"Reviewed: {reviewed}")
+    print(f"Add the folder as {wid}/ at the repository root, then open a pull request.")
+
+    if shutil.which("gh"):
+        print()
+        print("Commands to run:")
+        print()
+        print("  gh repo fork bleak-ai/workflows --clone")
+        print("  cd workflows")
+        print(f"  cp -r {folder} {wid}")
+        print(f"  git add {wid}")
+        print(f'  git commit -m "Add {wid} workflow"')
+        print(f'  gh pr create --title "Add {wid}" --body "New workflow: {meta["name"]}"')
 
 
 def main():
@@ -644,13 +733,13 @@ def main():
         p.add_argument("project", nargs="?", help="Path to gcontext project directory")
         p.add_argument("--port", type=int, help=f"Server port (default: {DEFAULT_PORT}, or port: in gcontext.yaml)")
 
-    up_parser = subparsers.add_parser("up", help="Start the server. Harnesses connect to its URL")
+    up_parser = subparsers.add_parser("up", help="Start the server. Clients connect to its URL")
     add_common(up_parser)
 
     status_parser = subparsers.add_parser("status", help="Server up? Who is connected? Plus connections, secrets, modules")
     add_common(status_parser)
 
-    connect_parser = subparsers.add_parser("connect", help="Show how to point a harness at the server URL")
+    connect_parser = subparsers.add_parser("connect", help="Show how to point a client at the server URL")
     connect_parser.add_argument(
         "client",
         nargs="?",
@@ -663,15 +752,12 @@ def main():
     context_parser = subparsers.add_parser("context", help="Show the context ledger: every pipe into the agent, per mode")
     add_common(context_parser)
 
-    add_parser = subparsers.add_parser("add", help="Install a published workflow from the marketplace into modules/")
-    add_parser.add_argument("workflow_id", help="Workflow id from the directory (e.g. coolify-ops)")
+    add_parser = subparsers.add_parser("add", help="Install a workflow from the GitHub registry into modules/")
+    add_parser.add_argument("source", help="Workflow id (e.g. browser-recipes) or GitHub URL (e.g. https://github.com/owner/repo/tree/main/path)")
     add_parser.add_argument("project", nargs="?", help="Path to gcontext project directory")
 
-    share_parser = subparsers.add_parser("share", help="Submit a workflow template to the marketplace for review")
-    share_parser.add_argument("module_path", help="Path to the template folder (or workflow id when used with --status)")
-    share_parser.add_argument("--api-url", dest="api_url", help="Override the API base URL")
-    share_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation when the workflow already exists")
-    share_parser.add_argument("--status", action="store_true", help="Query submission status instead of submitting")
+    share_parser = subparsers.add_parser("share", help="Validate a workflow template and show how to submit it via PR")
+    share_parser.add_argument("module_path", help="Path to the template folder")
 
     args = parser.parse_args()
 
