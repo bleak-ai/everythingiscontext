@@ -209,3 +209,56 @@ def test_add_tarball_path_traversal_in_archive(registry, agent):
     result = run_cli("add", "demo-flow", cwd=agent)
     assert result.returncode == 1
     assert "unsafe file path" in result.stderr
+
+
+# --- Install-ping tests ---
+
+
+@pytest.fixture
+def ping_server(monkeypatch):
+    """Local HTTP server that records requests. Yields its received list."""
+    received = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            received.append({"path": self.path, "headers": dict(self.headers)})
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"id":"demo-flow","name":"Demo","description":"x","tags":[],"files":[]}')
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_port}"
+    monkeypatch.setenv("GCONTEXT_API", url)
+    yield received
+    server.shutdown()
+
+
+def test_add_pings_download_counter(registry, agent, ping_server):
+    registry[0] = _build_tarball(_registry_files())
+    result = run_cli("add", "demo-flow", cwd=agent)
+    assert result.returncode == 0, result.stderr
+    assert len(ping_server) == 1
+    assert ping_server[0]["path"] == "/api/workflows/demo-flow"
+    assert ping_server[0]["headers"].get("X-Source") == "cli"
+
+
+def test_add_succeeds_when_ping_endpoint_down(registry, agent, monkeypatch):
+    monkeypatch.setenv("GCONTEXT_API", "http://127.0.0.1:1")
+    registry[0] = _build_tarball(_registry_files())
+    result = run_cli("add", "demo-flow", cwd=agent)
+    assert result.returncode == 0, result.stderr
+    assert (agent / "modules" / "demo-flow" / "index.md").exists()
+
+
+def test_add_url_install_does_not_ping(registry, agent, ping_server):
+    registry[0] = _build_tarball(BUNDLE_FILES, prefix="repo-main")
+    local_url = os.environ["GCONTEXT_REGISTRY"]
+    result = run_cli("add", local_url, cwd=agent)
+    assert result.returncode == 0, result.stderr
+    assert len(ping_server) == 0

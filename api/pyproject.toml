@@ -1,15 +1,13 @@
 [project]
 name = "gcontext-workflows-api"
-version = "0.1.1"
-description = "Marketplace backend for gcontext workflow templates: Postgres-backed store with submit-for-review publishing."
+version = "0.2.0"
+description = "Install-counter service for gcontext workflow templates."
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "sqlalchemy>=2.0",
     "psycopg[binary]>=3.2",
-    "pyyaml>=6.0",
-    "slowapi>=0.1.9",
 ]
 
 [dependency-groups]

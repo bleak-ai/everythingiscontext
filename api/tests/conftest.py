@@ -39,7 +39,6 @@ def postgres():
         f"postgresql+psycopg://postgres:test@127.0.0.1:{PORT}/workflows"
     )
     os.environ["ADMIN_TOKEN"] = "test-admin-token"
-    # The port answers before postgres accepts connections; retry the first connect.
     from app.db import init_db
 
     for _ in range(30):
@@ -61,9 +60,7 @@ def client(postgres):
     from app.db import engine
     from app.main import app
     from app.models import Base
-    from app.ratelimit import limiter
 
-    limiter.reset()
     Base.metadata.drop_all(engine())
     Base.metadata.create_all(engine())
     with TestClient(app) as test_client:

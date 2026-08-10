@@ -12,6 +12,7 @@ import json
 import os
 import tarfile
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path, PurePosixPath
 
@@ -23,6 +24,7 @@ class RegistryError(Exception):
 
 
 DEFAULT_REGISTRY = "bleak-ai/workflows@main"
+DEFAULT_API = "https://api.gcontext.ai"
 MANIFEST_NAME = ".template.yaml"
 
 
@@ -194,11 +196,26 @@ def read_manifest(module_dir: Path) -> dict | None:
         return None
 
 
+def _ping_download(workflow_id: str) -> None:
+    """Notify the API of a CLI install so the download counter stays accurate."""
+    try:
+        req = urllib.request.Request(
+            f"{os.environ.get('GCONTEXT_API', DEFAULT_API)}/api/workflows/"
+            f"{urllib.parse.quote(workflow_id, safe='')}",
+            headers={"X-Source": "cli", "User-Agent": "gcontext-cli"},
+        )
+        with urllib.request.urlopen(req, timeout=3):
+            pass
+    except Exception:
+        pass
+
+
 def install_workflow(project_dir: Path, source: str) -> dict:
-    if "://" in source or source.startswith("github.com/"):
-        files, ref = fetch_workflow_by_url(source)
-    else:
+    is_registry_install = not ("://" in source or source.startswith("github.com/"))
+    if is_registry_install:
         files, ref = fetch_workflow_by_id(source)
+    else:
+        files, ref = fetch_workflow_by_url(source)
 
     try:
         meta = validate_bundle(files)
@@ -218,6 +235,11 @@ def install_workflow(project_dir: Path, source: str) -> dict:
         dest.write_text(f["content"])
 
     write_manifest(module_dir, meta["id"], ref, files)
+
+    if is_registry_install and (
+        os.environ.get("GCONTEXT_API") or registry_spec() == DEFAULT_REGISTRY
+    ):
+        _ping_download(meta["id"])
 
     return {"id": meta["id"], "name": meta["name"], "count": len(files), "path": f"modules/{meta['id']}"}
 
