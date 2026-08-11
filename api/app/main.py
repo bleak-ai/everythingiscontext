@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -15,7 +16,15 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="gcontext workflows API", lifespan=lifespan)
+_docs_enabled = os.environ.get("API_DOCS") == "1"
+
+app = FastAPI(
+    title="gcontext workflows API",
+    lifespan=lifespan,
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
