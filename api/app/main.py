@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .db import init_db
 from .routes_admin import router as admin_router
 from .routes_public import router as public_router
+from .routes_telemetry import router as telemetry_router
 
 
 @asynccontextmanager
@@ -28,6 +29,7 @@ app.add_middleware(
 )
 app.include_router(public_router)
 app.include_router(admin_router)
+app.include_router(telemetry_router)
 
 
 @app.get("/health")
