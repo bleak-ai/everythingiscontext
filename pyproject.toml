@@ -1,6 +1,6 @@
 [project]
 name = "gcontext-ai"
-version = "0.7.0"
+version = "0.8.0"
 description = "The framework for building stateful agents. Your agent is a folder of state, served over MCP, used from any runtime."
 readme = "README.md"
 license = { text = "MIT" }

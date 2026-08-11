@@ -1,11 +1,14 @@
+import os
 import subprocess
 import sys
 
 
-def run_cli(*args, cwd):
+def run_cli(*args, cwd, env_extra=None):
+    # Point telemetry at an unreachable local port so tests never hit the network.
+    env = {**os.environ, "GCONTEXT_API": "http://127.0.0.1:9", **(env_extra or {})}
     return subprocess.run(
         [sys.executable, "-m", "gcontext.cli", *args],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, env=env,
     )
 
 
@@ -25,6 +28,28 @@ def test_init_scaffolds_agent(tmp_path):
     assert not any((agent / "connections").glob("*/connection.yaml"))
     assert "name: my-agent" in (agent / "gcontext.yaml").read_text()
     assert "secrets.env" in (agent / ".gitignore").read_text()
+
+
+def test_init_generates_install_id(tmp_path):
+    import yaml
+    result = run_cli("init", "my-agent", cwd=tmp_path)
+    assert result.returncode == 0
+    config = yaml.safe_load((tmp_path / "my-agent" / "gcontext.yaml").read_text())
+    install_id = config.get("install_id")
+    assert install_id is not None
+    assert len(install_id) == 36
+
+
+def test_init_prints_telemetry_notice(tmp_path):
+    result = run_cli("init", "my-agent", cwd=tmp_path)
+    assert result.returncode == 0
+    assert "GCONTEXT_TELEMETRY=0" in result.stdout
+
+
+def test_init_no_telemetry_notice_when_disabled(tmp_path):
+    result = run_cli("init", "my-agent", cwd=tmp_path, env_extra={"GCONTEXT_TELEMETRY": "0"})
+    assert result.returncode == 0
+    assert "anonymous install event" not in result.stdout
 
 
 def test_init_refuses_non_empty_dir(tmp_path):

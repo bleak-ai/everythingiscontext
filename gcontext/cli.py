@@ -9,6 +9,7 @@ import socket
 import sys
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 
 from . import __version__
@@ -46,6 +47,7 @@ def print_ledger(project_dir: Path):
 INIT_GCONTEXT_YAML = """\
 name: {name}
 description: Describe what this agent is for.
+install_id: {install_id}
 # port: 4242
 """
 
@@ -101,8 +103,9 @@ def cmd_init(args):
         sys.exit(1)
 
     name = target.name
+    install_id = str(uuid.uuid4())
     files = {
-        "gcontext.yaml": INIT_GCONTEXT_YAML.format(name=name),
+        "gcontext.yaml": INIT_GCONTEXT_YAML.format(name=name, install_id=install_id),
         "README.md": INIT_README.format(name=name),
         "agent.md": INIT_INSTRUCTIONS,
         "secrets.env": INIT_SECRETS,
@@ -118,9 +121,14 @@ def cmd_init(args):
 
     (target / "secrets.env").chmod(0o600)
 
+    from gcontext.telemetry import ping_install
+    ping_install(install_id, __version__)
+
     print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} created {name} at {target}")
     print()
     print("The folder IS your agent's state: version it with git, edit it freely.")
+    if os.environ.get("GCONTEXT_TELEMETRY") != "0":
+        print(f"{DIM}Sent anonymous install event. Disable with GCONTEXT_TELEMETRY=0{RESET}")
     print()
     pad = min(max(len(f"gcontext up {args.directory}"), len(f"/mcp__{name}__setup")) + 4, 44)
     print("Next steps:")
