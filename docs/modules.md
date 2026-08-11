@@ -10,7 +10,7 @@ A module does NOT contain code, API keys, or connection config. It contains know
 
 ## Why this works
 
-Modules are connection-agnostic. A support workflow module doesn't know about Stripe or Postgres. It knows "intake a ticket, find the right playbook, execute with approval, log the result." The agent figures out which connections to use at runtime by reading `connections/`.
+Modules are connection-agnostic. A support agent module doesn't know about Stripe or Postgres. It knows "intake a ticket, find the right playbook, execute with approval, log the result." The agent figures out which connections to use at runtime by reading `connections/`.
 
 This means the same module works for:
 - A company using Stripe + Cloudflare
@@ -27,9 +27,9 @@ modules/my-module/
   index.md            # required: what this is, how it works
 ```
 
-Workflow module (like support-workflow):
+Agent module (like support-agent):
 ```
-modules/support-workflow/
+modules/support-agent/
   index.md            # what this is, how the agent should use it
   steps.md            # the process to follow
   playbooks/          # reusable procedures, built over time
@@ -73,16 +73,16 @@ The module grows over time as the agent adds playbooks and logs. Each copy diver
 ## What makes a good module
 
 - **`index.md` is self-contained.** Anyone reading it (human or agent) should understand the module's purpose in the first paragraph.
-- **Connection-agnostic.** Never reference specific services by name in the workflow steps. Say "the payment provider" not "Stripe."
+- **Connection-agnostic.** Never reference specific services by name in the agent's steps. Say "the payment provider" not "Stripe."
 - **Process over implementation.** Describe what to do, not how to call a specific API. The connection's `index.md` handles the API details.
 - **Grows with use.** Playbooks and logs are empty when downloaded. They fill up as the agent works.
 
 ## Examples
 
-**Support workflow**: a 5-step process for resolving support tickets. Ships with the process and empty playbooks. The agent builds playbooks as it resolves real issues for your company.
+**Support agent**: a 5-step process for resolving support tickets. Ships with the process and empty playbooks. The agent builds playbooks as it resolves real issues for your company.
 
-**Onboarding workflow**: a checklist for setting up new team members. Ships with the steps. Each company customizes it with their specific accounts, tools, and access requirements.
+**Onboarding agent**: a checklist for setting up new team members. Ships with the steps. Each company customizes it with their specific accounts, tools, and access requirements.
 
 **Incident response**: a process for handling production incidents. Ships with severity levels and communication templates. Playbooks accumulate as incidents are resolved.
 
-**SEO pipeline**: a content creation workflow. Ships with the process (research, write, review, publish). Adapts to whatever CMS and analytics connections the company has.
+**SEO pipeline**: a content creation agent. Ships with the process (research, write, review, publish). Adapts to whatever CMS and analytics connections the company has.

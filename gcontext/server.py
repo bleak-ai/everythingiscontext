@@ -454,15 +454,15 @@ def _notify_prompts_changed():
         pass
 
 
-@mcp.tool(description=_tool_doc("workflow"), output_schema=None)
-def workflow(action: str, id: str = "", query: str = "") -> str:
+@mcp.tool(description=_tool_doc("agent"), output_schema=None)
+def agent(action: str, id: str = "", query: str = "") -> str:
     if action == "search":
         try:
             entries = registry_mod.search_catalog(query)
         except (registry_mod.RegistryError, ValueError) as e:
             return f"Error: {e}."
         if not entries:
-            return f"No workflows match '{query}'."
+            return f"No agents match '{query}'."
         lines = []
         for e in entries:
             tags = ", ".join(e.get("tags", []))
@@ -472,14 +472,14 @@ def workflow(action: str, id: str = "", query: str = "") -> str:
             if tags:
                 lines.append(f"  tags: {tags}")
             lines.append("")
-        lines.append('Install one with workflow(action="install", id="<id>")')
+        lines.append('Install one with agent(action="install", id="<id>")')
         return "\n".join(lines)
 
     elif action == "install":
         if not id:
             return "Error: install needs an id."
         try:
-            result = registry_mod.install_workflow(PROJECT_DIR, id)
+            result = registry_mod.install_agent(PROJECT_DIR, id)
         except (registry_mod.RegistryError, ValueError) as e:
             return f"Error: {e}."
         _register_module_commands(result["id"])
@@ -496,20 +496,20 @@ def workflow(action: str, id: str = "", query: str = "") -> str:
                 module_dir = PROJECT_DIR / "modules" / id
                 if not module_dir.is_dir():
                     return f"Error: modules/{id} does not exist."
-                reports = [registry_mod.check_workflow(PROJECT_DIR, id)]
+                reports = [registry_mod.check_agent(PROJECT_DIR, id)]
             else:
                 reports = registry_mod.check_all(PROJECT_DIR)
         except (registry_mod.RegistryError, ValueError) as e:
             return f"Error: {e}."
         if not reports:
-            return f"No installed workflows track a template (no {registry_mod.MANIFEST_NAME} files found)."
+            return f"No installed agents track a template (no {registry_mod.MANIFEST_NAME} files found)."
         return "\n".join(registry_mod.format_check_report(r) for r in reports)
 
     elif action == "update":
         if not id:
             return "Error: update needs an id."
         try:
-            report = registry_mod.update_workflow(PROJECT_DIR, id)
+            report = registry_mod.update_agent(PROJECT_DIR, id)
         except (registry_mod.RegistryError, ValueError) as e:
             return f"Error: {e}."
         if report.get("commands_changed"):

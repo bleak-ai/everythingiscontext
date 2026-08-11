@@ -1,4 +1,4 @@
-"""Tests for `gcontext add <source>`: install a workflow from the GitHub registry."""
+"""Tests for `gcontext add <source>`: install an agent from the GitHub registry."""
 
 import io
 import os
@@ -13,7 +13,7 @@ import pytest
 INDEX_MD = """---
 id: demo-flow
 name: Demo Flow
-description: A tiny demo workflow for tests.
+description: A tiny demo agent for tests.
 tags: [demo]
 ---
 
@@ -21,7 +21,7 @@ Objective paragraph.
 """
 
 SETUP_MD = """---
-description: Set up the demo workflow
+description: Set up the demo agent
 ---
 
 Interview the user.
@@ -36,7 +36,7 @@ BUNDLE_FILES = [
 ]
 
 
-def _build_tarball(files, prefix="workflows-main"):
+def _build_tarball(files, prefix="agents-main"):
     """Build a .tar.gz in memory. Each file path is placed under prefix/."""
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tf:
@@ -50,9 +50,9 @@ def _build_tarball(files, prefix="workflows-main"):
     return buf.read()
 
 
-def _registry_files(workflow_id="demo-flow"):
-    """Return files list nested under a workflow_id/ folder, ready for a tarball."""
-    return [{"path": f"{workflow_id}/{f['path']}", "content": f["content"]} for f in BUNDLE_FILES]
+def _registry_files(agent_id="demo-flow"):
+    """Return files list nested under an agent_id/ folder, ready for a tarball."""
+    return [{"path": f"{agent_id}/{f['path']}", "content": f["content"]} for f in BUNDLE_FILES]
 
 
 def run_cli(*args, cwd, env=None):
@@ -126,8 +126,8 @@ def test_add_unknown_id_reports_error(registry, agent):
     registry[0] = _build_tarball(_registry_files())
     result = run_cli("add", "nope", cwd=agent)
     assert result.returncode == 1
-    assert "no workflow" in result.stderr
-    assert "bleak-ai/workflows" in result.stderr
+    assert "no agent" in result.stderr
+    assert "bleak-ai/agents" in result.stderr
 
 
 def test_add_rejects_bundle_without_index(registry, agent):
@@ -135,7 +135,7 @@ def test_add_rejects_bundle_without_index(registry, agent):
     registry[0] = _build_tarball(bad_files)
     result = run_cli("add", "demo-flow", cwd=agent)
     assert result.returncode == 1
-    assert "invalid workflow bundle" in result.stderr
+    assert "invalid agent bundle" in result.stderr
     assert not (agent / "modules" / "demo-flow").exists()
 
 
@@ -144,7 +144,7 @@ def test_add_rejects_bad_frontmatter(registry, agent):
     registry[0] = _build_tarball(bad_files)
     result = run_cli("add", "demo-flow", cwd=agent)
     assert result.returncode == 1
-    assert "invalid workflow bundle" in result.stderr
+    assert "invalid agent bundle" in result.stderr
     assert not (agent / "modules" / "demo-flow").exists()
 
 
@@ -178,7 +178,7 @@ def test_add_github_url(registry, agent, monkeypatch):
     We serve the same tarball at the local server and override _codeload_url
     so the CLI fetches from our local fixture instead of real GitHub.
     """
-    # Build a tarball where files sit at the repo root (no workflow_id subfolder)
+    # Build a tarball where files sit at the repo root (no agent_id subfolder)
     registry[0] = _build_tarball(BUNDLE_FILES, prefix="repo-main")
 
     # The subprocess inherits GCONTEXT_REGISTRY, but for URL mode the CLI

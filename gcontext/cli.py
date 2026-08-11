@@ -422,14 +422,14 @@ def cmd_add(args):
     source = args.source
 
     try:
-        result = registry_mod.install_workflow(project_dir, source)
+        result = registry_mod.install_agent(project_dir, source)
     except (registry_mod.RegistryError, ValueError) as e:
         msg = str(e)
         print(f"Error: {msg}", file=sys.stderr)
-        if "no workflow" in msg:
-            print("Browse available workflows:", file=sys.stderr)
-            print("  https://github.com/bleak-ai/workflows", file=sys.stderr)
-            print("  https://gcontext.ai/workflows/", file=sys.stderr)
+        if "no agent" in msg:
+            print("Browse available agents:", file=sys.stderr)
+            print("  https://github.com/bleak-ai/agents", file=sys.stderr)
+            print("  https://gcontext.ai/agents/", file=sys.stderr)
         sys.exit(1)
 
     rel = result["path"]
@@ -440,7 +440,7 @@ def cmd_add(args):
 
 
 def validate_template(folder: Path) -> dict:
-    """Validate a local template folder against the workflow standard.
+    """Validate a local template folder against the agent standard.
 
     Returns parsed frontmatter on success. Prints an error and exits on failure.
     """
@@ -467,8 +467,8 @@ def validate_template(folder: Path) -> dict:
         print("Error: index.md frontmatter is missing 'tags' (at least one tag required).", file=sys.stderr)
         sys.exit(1)
 
-    wid = meta["id"]
-    if not isinstance(wid, str) or not ID_RE.match(wid):
+    agent_id = meta["id"]
+    if not isinstance(agent_id, str) or not ID_RE.match(agent_id):
         print("Error: id must be lowercase letters, digits, and hyphens.", file=sys.stderr)
         sys.exit(1)
 
@@ -512,31 +512,31 @@ def cmd_share(args):
 
     meta = validate_template(folder)
     files = bundle_files(folder)
-    wid = meta["id"]
+    agent_id = meta["id"]
 
-    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} validated {wid} ({len(files)} files)")
+    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} validated {agent_id} ({len(files)} files)")
     print()
-    print("To publish this workflow, open a PR against the registry:")
-    print("  https://github.com/bleak-ai/workflows")
+    print("To publish this agent, open a PR against the registry:")
+    print("  https://github.com/bleak-ai/agents")
     print()
-    print(f"Add the folder as {wid}/ at the repository root, then open a pull request.")
+    print(f"Add the folder as {agent_id}/ at the repository root, then open a pull request.")
 
     if shutil.which("gh"):
         print()
         print("Commands to run:")
         print()
-        print("  gh repo fork bleak-ai/workflows --clone")
-        print("  cd workflows")
-        print(f"  cp -r {folder} {wid}")
-        print(f"  git add {wid}")
-        print(f'  git commit -m "Add {wid} workflow"')
-        print(f'  gh pr create --title "Add {wid}" --body "New workflow: {meta["name"]}"')
+        print("  gh repo fork bleak-ai/agents --clone")
+        print("  cd agents")
+        print(f"  cp -r {folder} {agent_id}")
+        print(f"  git add {agent_id}")
+        print(f'  git commit -m "Add {agent_id} agent"')
+        print(f'  gh pr create --title "Add {agent_id}" --body "New agent: {meta["name"]}"')
 
 
 def cmd_update(args):
     project_dir = find_project_dir(args.project)
     try:
-        report = registry_mod.update_workflow(project_dir, args.id)
+        report = registry_mod.update_agent(project_dir, args.id)
     except (registry_mod.RegistryError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -558,7 +558,7 @@ def cmd_search(args):
         sys.exit(1)
 
     if not entries:
-        print(f"No workflows match '{args.query}'.")
+        print(f"No agents match '{args.query}'.")
         return
 
     for e in entries:
@@ -604,18 +604,18 @@ def main():
     context_parser = subparsers.add_parser("context", help="Show the context ledger: every pipe into the agent, per mode")
     add_common(context_parser)
 
-    add_parser = subparsers.add_parser("add", help="Install a workflow from the GitHub registry into modules/")
-    add_parser.add_argument("source", help="Workflow id (e.g. browser-recipes) or GitHub URL (e.g. https://github.com/owner/repo/tree/main/path)")
+    add_parser = subparsers.add_parser("add", help="Install an agent from the GitHub registry into modules/")
+    add_parser.add_argument("source", help="Agent id (e.g. browser-recipes) or GitHub URL (e.g. https://github.com/owner/repo/tree/main/path)")
     add_parser.add_argument("project", nargs="?", help="Path to gcontext project directory")
 
-    share_parser = subparsers.add_parser("share", help="Validate a workflow template and show how to submit it via PR")
+    share_parser = subparsers.add_parser("share", help="Validate an agent template and show how to submit it via PR")
     share_parser.add_argument("module_path", help="Path to the template folder")
 
-    update_parser = subparsers.add_parser("update", help="Update an installed workflow from the registry")
-    update_parser.add_argument("id", help="Workflow id (the modules/ folder name)")
+    update_parser = subparsers.add_parser("update", help="Update an installed agent from the registry")
+    update_parser.add_argument("id", help="Agent id (the modules/ folder name)")
     update_parser.add_argument("project", nargs="?", help="Path to gcontext project directory")
 
-    search_parser = subparsers.add_parser("search", help="Search the workflow registry")
+    search_parser = subparsers.add_parser("search", help="Search the agent registry")
     search_parser.add_argument("query", nargs="?", default="", help="Substring to match against id, name, description, tags")
 
     args = parser.parse_args()

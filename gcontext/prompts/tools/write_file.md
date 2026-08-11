@@ -12,5 +12,5 @@ sibling, or a new file the folder's index.md does not mention. The write
 still happens; update the index right away so the map stays complete.
 
 Args:
-    path: Relative path within the project (e.g. 'modules/support-workflow/playbooks/refund.md')
+    path: Relative path within the project (e.g. 'modules/support-agent/playbooks/refund.md')
     content: The full file content to write.

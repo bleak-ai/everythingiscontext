@@ -1,5 +1,6 @@
-"""Tests for the workflow MCP tool: search, install, check, update."""
+"""Tests for the agent MCP tool: search, install, check, update."""
 
+import asyncio
 import hashlib
 import io
 import json
@@ -16,10 +17,23 @@ import yaml
 
 from gcontext import registry as registry_mod, server, fs
 
+
+# --- Tool registration tests ---
+
+def test_tool_registered_as_agent_not_workflow():
+    async def go():
+        return await server.mcp.get_tool("agent"), await server.mcp.get_tool("workflow")
+
+    agent_tool, workflow_tool = asyncio.run(go())
+    assert agent_tool is not None
+    assert agent_tool.name == "agent"
+    assert workflow_tool is None
+
+
 INDEX_MD = """---
 id: demo-flow
 name: Demo Flow
-description: A tiny demo workflow for tests.
+description: A tiny demo agent for tests.
 tags: [demo]
 ---
 
@@ -27,7 +41,7 @@ Objective paragraph.
 """
 
 SETUP_MD = """---
-description: Set up the demo workflow
+description: Set up the demo agent
 ---
 
 Interview the user.
@@ -43,18 +57,18 @@ BUNDLE_FILES = [
 
 CATALOG = {
     "generated": "2026-08-10T12:00:00Z",
-    "workflows": [
+    "agents": [
         {
             "id": "demo-flow",
             "name": "Demo Flow",
-            "description": "A tiny demo workflow for tests.",
+            "description": "A tiny demo agent for tests.",
             "tags": ["demo"],
             "files": [f["path"] for f in BUNDLE_FILES],
         },
         {
             "id": "ops-flow",
             "name": "Ops Flow",
-            "description": "An operations workflow.",
+            "description": "An operations agent.",
             "tags": ["ops", "infra"],
             "files": ["index.md"],
         },
@@ -62,7 +76,7 @@ CATALOG = {
 }
 
 
-def _build_tarball(files, prefix="workflows-main"):
+def _build_tarball(files, prefix="agents-main"):
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tf:
         for f in files:
@@ -75,8 +89,8 @@ def _build_tarball(files, prefix="workflows-main"):
     return buf.read()
 
 
-def _registry_files(workflow_id="demo-flow"):
-    return [{"path": f"{workflow_id}/{f['path']}", "content": f["content"]} for f in BUNDLE_FILES]
+def _registry_files(agent_id="demo-flow"):
+    return [{"path": f"{agent_id}/{f['path']}", "content": f["content"]} for f in BUNDLE_FILES]
 
 
 def _file_hash(content):
@@ -134,33 +148,33 @@ def _tarball_with_catalog(extra_files=None):
 
 def test_search_returns_all(registry, project):
     registry[0] = _tarball_with_catalog()
-    result = server.workflow(action="search")
+    result = server.agent(action="search")
     assert "demo-flow" in result
     assert "ops-flow" in result
 
 
 def test_search_filters_by_query(registry, project):
     registry[0] = _tarball_with_catalog()
-    result = server.workflow(action="search", query="demo")
+    result = server.agent(action="search", query="demo")
     assert "demo-flow" in result
     assert "ops-flow" not in result
 
 
 def test_search_case_insensitive(registry, project):
     registry[0] = _tarball_with_catalog()
-    result = server.workflow(action="search", query="DEMO")
+    result = server.agent(action="search", query="DEMO")
     assert "demo-flow" in result
 
 
 def test_search_no_match(registry, project):
     registry[0] = _tarball_with_catalog()
-    result = server.workflow(action="search", query="nomatch")
-    assert "No workflows match" in result
+    result = server.agent(action="search", query="nomatch")
+    assert "No agents match" in result
 
 
 def test_search_without_catalog_errors(registry, project):
     registry[0] = _build_tarball(_registry_files())
-    result = server.workflow(action="search")
+    result = server.agent(action="search")
     assert result.startswith("Error:")
     assert "registry.json" in result
 
@@ -169,7 +183,7 @@ def test_search_without_catalog_errors(registry, project):
 
 def test_install_creates_module_and_manifest(registry, project):
     registry[0] = _tarball_with_catalog()
-    result = server.workflow(action="install", id="demo-flow")
+    result = server.agent(action="install", id="demo-flow")
     assert "Demo Flow" in result
     assert "commands/setup.md" in result
 
@@ -189,20 +203,20 @@ def test_install_existing_module_refuses(registry, project):
     marker.parent.mkdir(parents=True)
     marker.write_text("mine")
     registry[0] = _tarball_with_catalog()
-    result = server.workflow(action="install", id="demo-flow")
+    result = server.agent(action="install", id="demo-flow")
     assert result.startswith("Error:")
     assert "already exists" in result
     assert marker.read_text() == "mine"
 
 
 def test_install_missing_id(registry, project):
-    result = server.workflow(action="install")
+    result = server.agent(action="install")
     assert result.startswith("Error:")
     assert "needs an id" in result
 
 
 def test_unknown_action(registry, project):
-    result = server.workflow(action="frobnicate")
+    result = server.agent(action="frobnicate")
     assert result.startswith("Error:")
     assert "unknown action" in result
 
@@ -258,14 +272,14 @@ def test_index_warning_ignores_template_manifest(project):
 
 def test_check_up_to_date(registry, project):
     registry[0] = _tarball_with_catalog()
-    server.workflow(action="install", id="demo-flow")
-    result = server.workflow(action="check", id="demo-flow")
+    server.agent(action="install", id="demo-flow")
+    result = server.agent(action="check", id="demo-flow")
     assert "up to date" in result
 
 
 def test_check_detects_changes(registry, project):
     registry[0] = _tarball_with_catalog()
-    server.workflow(action="install", id="demo-flow")
+    server.agent(action="install", id="demo-flow")
 
     modified_step = "# Step 1 MODIFIED\n\nNew sync.\n"
     modified_files = []
@@ -280,27 +294,27 @@ def test_check_detects_changes(registry, project):
 
     (project / "modules" / "demo-flow" / "commands" / "setup.md").write_text("local edit")
 
-    result = server.workflow(action="check", id="demo-flow")
+    result = server.agent(action="check", id="demo-flow")
     assert "upstream changed" in result
     assert "locally modified" in result
 
 
 def test_check_nonexistent_module(registry, project):
-    result = server.workflow(action="check", id="nope")
+    result = server.agent(action="check", id="nope")
     assert result.startswith("Error:")
     assert "does not exist" in result
 
 
 def test_check_all_no_tracked(registry, project):
-    result = server.workflow(action="check")
-    assert "No installed workflows" in result
+    result = server.agent(action="check")
+    assert "No installed agents" in result
 
 
 # --- Update tests ---
 
 def test_update_applies_three_way(registry, project):
     registry[0] = _tarball_with_catalog()
-    server.workflow(action="install", id="demo-flow")
+    server.agent(action="install", id="demo-flow")
 
     (project / "modules" / "demo-flow" / "commands" / "setup.md").write_text("local edit")
 
@@ -324,7 +338,7 @@ def test_update_applies_three_way(registry, project):
         INDEX_MD.replace("Objective paragraph.", "My local objective.")
     )
 
-    result = server.workflow(action="update", id="demo-flow")
+    result = server.agent(action="update", id="demo-flow")
 
     assert (project / "modules" / "demo-flow" / "steps" / "1-sync.md").read_text() == new_step
     assert (project / "modules" / "demo-flow" / "commands" / "setup.md").read_text() == "local edit"
@@ -337,13 +351,13 @@ def test_update_without_manifest_errors(registry, project):
     mod = project / "modules" / "handmade"
     mod.mkdir(parents=True)
     (mod / "index.md").write_text("# handmade\n")
-    result = server.workflow(action="update", id="handmade")
+    result = server.agent(action="update", id="handmade")
     assert result.startswith("Error:")
     assert ".template.yaml" in result
 
 
 def test_update_missing_id(registry, project):
-    result = server.workflow(action="update")
+    result = server.agent(action="update")
     assert result.startswith("Error:")
     assert "needs an id" in result
 
@@ -387,5 +401,5 @@ def test_cli_update_unknown_module(registry, tmp_path):
 
 # --- Helpers ---
 
-def _registry_files_from(bundle_files, workflow_id="demo-flow"):
-    return [{"path": f"{workflow_id}/{f['path']}", "content": f["content"]} for f in bundle_files]
+def _registry_files_from(bundle_files, agent_id="demo-flow"):
+    return [{"path": f"{agent_id}/{f['path']}", "content": f["content"]} for f in bundle_files]

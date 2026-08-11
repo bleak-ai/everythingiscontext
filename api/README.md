@@ -1,6 +1,6 @@
 # workflows API
 
-The marketplace backend for workflow templates. A FastAPI service with a Postgres database. Templates are stored as file bundles (one row per file) plus indexed manifest fields parsed server-side from the bundle's `index.md` frontmatter (see `docs/workflows.md` for the template standard).
+The marketplace backend for workflow templates. A FastAPI service with a Postgres database. Templates are stored as file bundles (one row per file) plus indexed manifest fields parsed server-side from the bundle's `index.md` frontmatter (see `docs/agents.md` for the template standard).
 
 Publishing is submit-for-review: anyone can POST a bundle, it lands pending, and it appears publicly only after approval.
 

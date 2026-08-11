@@ -35,7 +35,7 @@ How the folder is organized:
   - <name>.py: a script command. Starts with the same frontmatter as a
     `# ---` comment block; invoking it tells the agent to run the file via
     run_script with the arguments as params.
-  When the user asks for a reusable command or workflow entry point, this
+  When the user asks for a reusable command or agent entry point, this
   is where it goes: write the file with write_file under the connection or
   module it belongs to. New commands appear after a server restart, which
   the user must do; tell them.

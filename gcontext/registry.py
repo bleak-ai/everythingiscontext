@@ -1,6 +1,6 @@
-"""Workflow registry: fetch, install, check, and update workflows from a GitHub registry.
+"""Agent registry: fetch, install, check, and update agents from a GitHub registry.
 
-The registry is a GitHub repo with one folder per workflow template.
+The registry is a GitHub repo with one folder per agent template.
 The env var GCONTEXT_REGISTRY accepts "owner/repo@ref" or a direct URL to
 a .tar.gz (useful for tests). All failures raise RegistryError; callers
 handle the presentation (CLI prints and exits, server tool returns a string).
@@ -23,7 +23,7 @@ class RegistryError(Exception):
     pass
 
 
-DEFAULT_REGISTRY = "bleak-ai/workflows@main"
+DEFAULT_REGISTRY = "bleak-ai/agents@main"
 DEFAULT_API = "https://api.gcontext.ai"
 MANIFEST_NAME = ".template.yaml"
 
@@ -117,24 +117,24 @@ def parse_github_url(url: str) -> tuple[str, str, str]:
     return owner_repo, ref, subpath
 
 
-def fetch_workflow_by_id(workflow_id: str) -> tuple[list[dict], str]:
+def fetch_agent_by_id(agent_id: str) -> tuple[list[dict], str]:
     url = parse_registry()
     tf = download_tarball(url)
     ref = tarball_ref(tf)
     all_files = extract_files(tf)
-    prefix = workflow_id + "/"
+    prefix = agent_id + "/"
     matched = []
     for f in all_files:
         if f["path"].startswith(prefix):
             matched.append({"path": f["path"][len(prefix):], "content": f["content"]})
-        elif f["path"] == workflow_id:
+        elif f["path"] == agent_id:
             matched.append({"path": f["path"], "content": f["content"]})
     if not matched:
-        raise RegistryError(f"no workflow '{workflow_id}' found in the registry")
+        raise RegistryError(f"no agent '{agent_id}' found in the registry")
     return matched, ref
 
 
-def fetch_workflow_by_url(url: str) -> tuple[list[dict], str]:
+def fetch_agent_by_url(url: str) -> tuple[list[dict], str]:
     if "github.com/" in url or url.startswith("github.com/"):
         owner_repo, ref, subpath = parse_github_url(url)
         tarball_url = codeload_url(f"{owner_repo}@{ref}")
@@ -176,9 +176,9 @@ def file_hash(content: str) -> str:
     return "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def write_manifest(module_dir: Path, workflow_id: str, ref: str, files: list[dict]):
+def write_manifest(module_dir: Path, agent_id: str, ref: str, files: list[dict]):
     data = {
-        "template": workflow_id,
+        "template": agent_id,
         "registry": registry_name(),
         "installed_ref": ref,
         "files": {f["path"]: file_hash(f["content"]) for f in sorted(files, key=lambda f: f["path"])},
@@ -196,12 +196,15 @@ def read_manifest(module_dir: Path) -> dict | None:
         return None
 
 
-def _ping_download(workflow_id: str) -> None:
+def _ping_download(agent_id: str) -> None:
     """Notify the API of a CLI install so the download counter stays accurate."""
     try:
+        # /api/workflows/ is the retired-but-live API's real endpoint path.
+        # Kept as "workflows" on purpose: that service is out of scope for
+        # this rename, and the path must match what it actually serves.
         req = urllib.request.Request(
             f"{os.environ.get('GCONTEXT_API', DEFAULT_API)}/api/workflows/"
-            f"{urllib.parse.quote(workflow_id, safe='')}",
+            f"{urllib.parse.quote(agent_id, safe='')}",
             headers={"X-Source": "cli", "User-Agent": "gcontext-cli"},
         )
         with urllib.request.urlopen(req, timeout=3):
@@ -210,17 +213,17 @@ def _ping_download(workflow_id: str) -> None:
         pass
 
 
-def install_workflow(project_dir: Path, source: str) -> dict:
+def install_agent(project_dir: Path, source: str) -> dict:
     is_registry_install = not ("://" in source or source.startswith("github.com/"))
     if is_registry_install:
-        files, ref = fetch_workflow_by_id(source)
+        files, ref = fetch_agent_by_id(source)
     else:
-        files, ref = fetch_workflow_by_url(source)
+        files, ref = fetch_agent_by_url(source)
 
     try:
         meta = validate_bundle(files)
     except ValueError as e:
-        raise RegistryError(f"invalid workflow bundle: {e}")
+        raise RegistryError(f"invalid agent bundle: {e}")
 
     module_dir = project_dir / "modules" / meta["id"]
     if module_dir.exists():
@@ -255,7 +258,7 @@ def load_catalog() -> list[dict]:
         raise RegistryError("the registry has no registry.json catalog")
     try:
         catalog = json.loads(catalog_file["content"])
-        return catalog["workflows"]
+        return catalog["agents"]
     except (json.JSONDecodeError, KeyError, TypeError):
         raise RegistryError("the registry has no registry.json catalog")
 
@@ -276,7 +279,7 @@ def search_catalog(query: str = "") -> list[dict]:
 
 # --- Check and update ---
 
-def check_workflow(project_dir: Path, module_name: str, upstream: dict | None = None) -> dict:
+def check_agent(project_dir: Path, module_name: str, upstream: dict | None = None) -> dict:
     module_dir = project_dir / "modules" / module_name
     manifest = read_manifest(module_dir)
     if manifest is None:
@@ -285,7 +288,7 @@ def check_workflow(project_dir: Path, module_name: str, upstream: dict | None = 
     template_id = manifest.get("template", module_name)
     if upstream is None:
         try:
-            files, ref = fetch_workflow_by_id(template_id)
+            files, ref = fetch_agent_by_id(template_id)
         except RegistryError:
             return {"id": module_name, "status": "missing-upstream"}
         upstream_map = {f["path"]: f["content"] for f in files}
@@ -377,12 +380,12 @@ def check_all(project_dir: Path) -> list[dict]:
     results = []
     for module_name, template_id in tracked.items():
         upstream_map = upstream_by_template.get(template_id, {})
-        report = check_workflow(project_dir, module_name, upstream=(upstream_map, ref))
+        report = check_agent(project_dir, module_name, upstream=(upstream_map, ref))
         results.append(report)
     return results
 
 
-def update_workflow(project_dir: Path, module_name: str) -> dict:
+def update_agent(project_dir: Path, module_name: str) -> dict:
     module_dir = project_dir / "modules" / module_name
     manifest = read_manifest(module_dir)
     if manifest is None:
@@ -392,7 +395,7 @@ def update_workflow(project_dir: Path, module_name: str) -> dict:
         )
 
     template_id = manifest.get("template", module_name)
-    files, ref = fetch_workflow_by_id(template_id)
+    files, ref = fetch_agent_by_id(template_id)
     upstream_map = {f["path"]: f["content"] for f in files}
     base_hashes = dict(manifest.get("files", {}))
     new_hashes = dict(base_hashes)

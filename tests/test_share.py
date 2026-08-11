@@ -1,4 +1,4 @@
-"""Tests for `gcontext share <module-path>`: validate a workflow template and show PR instructions."""
+"""Tests for `gcontext share <module-path>`: validate an agent template and show PR instructions."""
 
 import subprocess
 import sys
@@ -10,7 +10,7 @@ import pytest
 INDEX_MD = """---
 id: test-flow
 name: Test Flow
-description: A test workflow.
+description: A test agent.
 tags: [test]
 ---
 
@@ -73,7 +73,7 @@ def test_share_validates_and_prints_pr_instructions(template, request_log):
     assert result.returncode == 0, result.stderr
     assert "validated test-flow" in result.stdout
     assert "files)" in result.stdout
-    assert "bleak-ai/workflows" in result.stdout
+    assert "bleak-ai/agents" in result.stdout
     assert "PR" in result.stdout or "pull request" in result.stdout.lower() or "pr" in result.stdout.lower()
     # No HTTP requests should have been made
     assert len(log) == 0

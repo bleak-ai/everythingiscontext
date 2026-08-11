@@ -165,10 +165,10 @@ Developing the dashboard itself needs node: `make web-dev` runs a Vite dev serve
 | `gcontext up [dir]` | Serve the folder over MCP |
 | `gcontext status [dir]` | Server state, connected clients, state overview |
 | `gcontext connect [client]` | Connection steps for claude, desktop, codex, cursor |
-| `gcontext add <id>` | Install a workflow from the registry repo ([github.com/bleak-ai/workflows](https://github.com/bleak-ai/workflows)) or from any public GitHub repo folder via `gcontext add <github-url>` |
-| `gcontext update <id>` | Update an installed workflow from the registry (three-way merge: keeps your local changes, writes `.new` files on conflicts) |
-| `gcontext search [query]` | Search the workflow registry by name, description, or tags |
-| `gcontext share <path>` | Validate a workflow template folder and print the steps to submit it as a pull request to the registry |
+| `gcontext add <id>` | Install an agent from the registry repo ([github.com/bleak-ai/agents](https://github.com/bleak-ai/agents)) or from any public GitHub repo folder via `gcontext add <github-url>` |
+| `gcontext update <id>` | Update an installed agent from the registry (three-way merge: keeps your local changes, writes `.new` files on conflicts) |
+| `gcontext search [query]` | Search the agent registry by name, description, or tags |
+| `gcontext share <path>` | Validate an agent template folder and print the steps to submit it as a pull request to the registry |
 | `gcontext context [dir]` | Print the context ledger |
 
 ## Going further
@@ -177,8 +177,8 @@ Developing the dashboard itself needs node: `make web-dev` runs a Vite dev serve
 - [docs/design.md](docs/design.md): why gcontext is built this way, decision by decision
 - [docs/connections.md](docs/connections.md): the connection reference, from manifest fields to smoke tests
 - [docs/modules.md](docs/modules.md): writing portable, shareable modules
-- [docs/workflows.md](docs/workflows.md): the workflow template standard, the contract for distributable context-based workflows
-- [docs/share-workflow.md](docs/share-workflow.md): instructions an author's agent follows to turn a lived workflow into a shareable template
+- [docs/agents.md](docs/agents.md): the agent template standard, the contract for distributable context-based agents
+- [docs/share-agent.md](docs/share-agent.md): instructions an author's agent follows to turn a lived agent into a shareable template
 
 ## Scope
 
