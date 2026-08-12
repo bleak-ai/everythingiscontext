@@ -104,7 +104,13 @@ def test_add_installs_bundle_into_modules(registry, agent):
     assert result.returncode == 0, result.stderr
     module = agent / "modules" / "demo-flow"
     for f in BUNDLE_FILES:
-        assert (module / f["path"]).read_text() == f["content"]
+        installed = (module / f["path"]).read_text()
+        if f["path"] == "index.md":
+            # add stamps the module as never set up; the rest is untouched.
+            assert installed.replace("setup: pending\n", "", 1) == f["content"]
+            assert "setup: pending" in installed
+        else:
+            assert installed == f["content"]
     assert "Demo Flow" in result.stdout
     assert "commands/setup.md" in result.stdout
 

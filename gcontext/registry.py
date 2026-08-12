@@ -172,6 +172,23 @@ def validate_bundle(files) -> dict:
     return meta
 
 
+def stamp_setup_pending(content: str) -> str:
+    """Insert `setup: pending` as the last frontmatter line of an index.md.
+
+    The setup flow removes the field when the smoke test passes; the manifest
+    keeps the hash of the unstamped content, so a finished setup leaves no
+    drift against the registry copy. Everything except the added line is
+    preserved byte for byte.
+    """
+    lines = content.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return content
+    for i, ln in enumerate(lines[1:], 1):
+        if ln.strip() == "---":
+            return "\n".join(lines[:i] + ["setup: pending"] + lines[i:])
+    return content
+
+
 def file_hash(content: str) -> str:
     return "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
 
@@ -235,8 +252,13 @@ def install_agent(project_dir: Path, source: str) -> dict:
     for f in files:
         dest = module_dir / f["path"]
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(f["content"])
+        content = f["content"]
+        if f["path"] == "index.md":
+            content = stamp_setup_pending(content)
+        dest.write_text(content)
 
+    # Hashes cover the unstamped registry content: once setup removes the
+    # `setup: pending` line, the module reads as unmodified again.
     write_manifest(module_dir, meta["id"], ref, files)
 
     if is_registry_install and (

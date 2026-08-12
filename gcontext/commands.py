@@ -92,12 +92,19 @@ def _script_prompt_body(rel_path: str, meta: dict[str, Any]) -> str:
     )
 
 
-def _render_fn(body: str, params: list[dict[str, Any]]):
+def _render_fn(body: str, params: list[dict[str, Any]], extra=None):
     """A render function whose signature carries the declared parameters, so
-    FastMCP derives the prompt arguments (and rejects missing required ones)."""
+    FastMCP derives the prompt arguments (and rejects missing required ones).
+
+    `extra` is an optional zero-arg callable returning additional
+    substitutions, computed at invocation time (server-filled placeholders
+    like $setup_report, alongside the user-supplied ones like $request)."""
 
     def render(**kwargs: str) -> str:
-        return Template(body).safe_substitute(**kwargs)
+        values = dict(kwargs)
+        if extra is not None:
+            values.update(extra())
+        return Template(body).safe_substitute(**values)
 
     sig_params = [
         inspect.Parameter(
@@ -134,14 +141,23 @@ def discover_framework_prompts() -> list[Path]:
     )
 
 
-def register_framework_prompts(mcp) -> int:
+def register_framework_prompts(mcp, root: Path | None = None) -> int:
     """Register the framework's own prompts, shipped in the package.
 
     Same file format as project commands, but framework-owned: they update
     with the package and exist in every instance. Currently one: `setup`,
     the guided add-a-connection / add-a-module / health-check flow.
+
+    When `root` is given, the $setup_report placeholder is filled at
+    invocation time with the code-built report for that project.
     """
     from fastmcp.prompts.prompt import Prompt
+
+    extra = None
+    if root is not None:
+        def extra():
+            from .report import build_setup_report
+            return {"setup_report": build_setup_report(root)}
 
     prompts_dir = Path(__file__).parent / "prompts"
     count = 0
@@ -149,7 +165,7 @@ def register_framework_prompts(mcp) -> int:
         if path.stem in ("framework-instructions", "resources", "README"):
             continue
         meta, body = parse_command(path.read_text(encoding="utf-8"))
-        fn = _render_fn(body, meta.get("parameters") or [])
+        fn = _render_fn(body, meta.get("parameters") or [], extra=extra)
         fn.__name__ = path.stem
         mcp.add_prompt(
             Prompt.from_function(fn, name=path.stem, description=meta.get("description", ""))

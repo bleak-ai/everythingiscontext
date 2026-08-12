@@ -270,9 +270,16 @@ def test_index_warning_ignores_template_manifest(project):
 
 # --- Check tests ---
 
+def _finish_setup(module_dir):
+    """Simulate the setup flow removing the `setup: pending` stamp."""
+    index = module_dir / "index.md"
+    index.write_text(index.read_text().replace("setup: pending\n", "", 1))
+
+
 def test_check_up_to_date(registry, project):
     registry[0] = _tarball_with_catalog()
     server.agent(action="install", id="demo-flow")
+    _finish_setup(project / "modules" / "demo-flow")
     result = server.agent(action="check", id="demo-flow")
     assert "up to date" in result
 
@@ -385,6 +392,7 @@ def test_cli_update_up_to_date(registry, tmp_path):
     agent = tmp_path / "a"
     _run_cli("init", "a", cwd=tmp_path)
     _run_cli("add", "demo-flow", cwd=agent)
+    _finish_setup(agent / "modules" / "demo-flow")
     result = _run_cli("update", "demo-flow", cwd=agent)
     assert result.returncode == 0
     assert "up to date" in result.stdout

@@ -291,8 +291,10 @@ def register_commands() -> int:
 
 
 def register_framework_prompts() -> int:
-    """Register the package's own prompts (setup). Call once at startup."""
-    return commands_mod.register_framework_prompts(mcp)
+    """Register the package's own prompts (setup). Call once at startup,
+    after PROJECT_DIR is set: the setup prompt's $setup_report placeholder
+    is filled from this project's state at invocation time."""
+    return commands_mod.register_framework_prompts(mcp, PROJECT_DIR)
 
 
 def load_instructions() -> tuple[int, int]:

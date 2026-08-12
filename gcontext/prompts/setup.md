@@ -12,6 +12,11 @@ gcontext tools.
 
 The user's request, possibly empty: "$request"
 
+The setup report, built by the framework from the project state. Show it to
+the user verbatim as your first output; never rewrite it:
+
+$setup_report
+
 ## Ground rules
 
 - The user does not need to know gcontext's concepts. Never ask "do you want
