@@ -17,9 +17,22 @@ as markdown, not in Python strings.
 - `setup.md`: the built-in `setup` prompt, registered as an MCP prompt in
   every instance (part of ledger pipe G6, `/mcp__<server>__setup` in Claude
   Code). Same frontmatter format as project commands, but framework-owned
-  and shipped with the package. It guides the agent through adding a
-  connection, adding a module, or health-checking the state, conversationally
-  and through the normal tools. Its text enters context only when invoked.
+  and shipped with the package. It follows the setup script standard
+  (`docs/setup-script.md`): the code-built report opens the dialogue, then
+  plan, questions one at a time, build progress, examples, one Next line.
+  Its text enters context only when invoked.
+- `explain.md`: the built-in `explain` prompt. Explains an installed agent:
+  the code-built Does / Connects / Learns / Flow report, then the model
+  walks the flow. Without an agent id it shows the agent list.
+- `ask.md`: the built-in `ask` prompt. Loads the agent's context and
+  answers a question using its state.
+- `agents.md`: the built-in `agents` prompt. Browse, install, and update
+  agents from the registry.
+
+The wording of the code-built reports (the setup report and the explain
+report) is not in this folder: it lives in `gcontext/report_strings.py`,
+strings only, imported by `report.py`, which owns the computation and the
+layout. Edit report wording there; everything conversational stays here.
 
 The agent's own definition is NOT here: it is the served project's
 `agent.md`, appended after the framework instructions in the same

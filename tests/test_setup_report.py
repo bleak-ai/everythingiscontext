@@ -7,6 +7,7 @@ import pytest
 from fastmcp import Client, FastMCP
 
 from gcontext import commands, registry
+from gcontext import report_strings as S
 from gcontext.kinds import CONNECTION_KINDS
 from gcontext.report import build_setup_report
 
@@ -91,25 +92,25 @@ def test_connection_kinds_enum():
 
 
 def test_report_no_agents(tmp_path):
-    assert build_setup_report(tmp_path) == "Welcome to gcontext\nNo agents installed."
+    assert build_setup_report(tmp_path) == f"{S.HEADER}\n{S.NO_AGENTS}"
 
 
 def test_report_module_without_connections_is_not_an_agent(tmp_path):
     _write_agent(tmp_path, index_md="---\nid: notes\nname: Notes\ndescription: x.\n---\n\nBody.\n", name="notes")
-    assert build_setup_report(tmp_path) == "Welcome to gcontext\nNo agents installed."
+    assert build_setup_report(tmp_path) == f"{S.HEADER}\n{S.NO_AGENTS}"
 
 
 def test_report_needs_setup(tmp_path):
     _write_agent(tmp_path, index_md=registry.stamp_setup_pending(INDEX_MD))
     report = build_setup_report(tmp_path)
     assert report == (
-        "Welcome to gcontext\n"
-        "Agent: browser-recipes\n"
+        f"{S.HEADER}\n"
+        f"{S.AGENT_LABEL} browser-recipes\n"
         "\n"
-        "Connections\n"
-        "  browser        MISSING\n"
+        f"{S.CONNECTIONS_HEADING}\n"
+        f"  browser        {S.CONNECTION_MISSING}\n"
         "\n"
-        "Status: needs setup"
+        f"{S.STATUS_LABEL} {S.STATUS_NEEDS_SETUP}"
     )
 
 
@@ -117,31 +118,31 @@ def test_report_needs_setup_wins_over_satisfied_connections(tmp_path):
     _write_agent(tmp_path, index_md=registry.stamp_setup_pending(INDEX_MD))
     _write_connection(tmp_path)
     report = build_setup_report(tmp_path)
-    assert "  browser        OK" in report
-    assert "Status: needs setup" in report
+    assert f"  browser        {S.CONNECTION_OK}" in report
+    assert f"{S.STATUS_LABEL} {S.STATUS_NEEDS_SETUP}" in report
 
 
 def test_report_connection_missing(tmp_path):
     _write_agent(tmp_path)
     report = build_setup_report(tmp_path)
-    assert "  browser        MISSING" in report
-    assert "Status: connection missing" in report
+    assert f"  browser        {S.CONNECTION_MISSING}" in report
+    assert f"{S.STATUS_LABEL} {S.STATUS_CONNECTION_MISSING}" in report
 
 
 def test_report_ready_when_kind_matches(tmp_path):
     _write_agent(tmp_path)
     _write_connection(tmp_path)
     report = build_setup_report(tmp_path)
-    assert "  browser        OK" in report
-    assert "Status: ready" in report
+    assert f"  browser        {S.CONNECTION_OK}" in report
+    assert f"{S.STATUS_LABEL} {S.STATUS_READY}" in report
 
 
 def test_report_connection_yaml_without_kind_does_not_match(tmp_path):
     _write_agent(tmp_path)
     _write_connection(tmp_path, yaml_text="name: chrome-cdp\ndescription: Chrome\n")
     report = build_setup_report(tmp_path)
-    assert "  browser        MISSING" in report
-    assert "Status: connection missing" in report
+    assert f"  browser        {S.CONNECTION_MISSING}" in report
+    assert f"{S.STATUS_LABEL} {S.STATUS_CONNECTION_MISSING}" in report
 
 
 def test_report_declared_connection_without_kind_is_missing(tmp_path):
@@ -150,8 +151,8 @@ def test_report_declared_connection_without_kind_is_missing(tmp_path):
     _write_agent(tmp_path, index_md=index)
     _write_connection(tmp_path)
     report = build_setup_report(tmp_path)
-    assert "MISSING" in report
-    assert "Status: connection missing" in report
+    assert S.CONNECTION_MISSING in report
+    assert f"{S.STATUS_LABEL} {S.STATUS_CONNECTION_MISSING}" in report
 
 
 def test_report_multiple_agents_share_one_header(tmp_path):
@@ -162,9 +163,9 @@ def test_report_multiple_agents_share_one_header(tmp_path):
     _write_agent(tmp_path, index_md=second, name="deploy-watch")
     _write_connection(tmp_path)
     report = build_setup_report(tmp_path)
-    assert report.count("Welcome to gcontext") == 1
-    assert report.index("Agent: browser-recipes") < report.index("Agent: deploy-watch")
-    assert "\n\nAgent: deploy-watch" in report
+    assert report.count(S.HEADER) == 1
+    assert report.index(f"{S.AGENT_LABEL} browser-recipes") < report.index(f"{S.AGENT_LABEL} deploy-watch")
+    assert f"\n\n{S.AGENT_LABEL} deploy-watch" in report
 
 
 # --- Server-side injection into the setup prompt ---
@@ -181,6 +182,6 @@ def test_setup_prompt_injects_report(tmp_path):
 
     text = asyncio.run(go()).messages[0].content.text
     assert "$setup_report" not in text
-    assert "Welcome to gcontext" in text
-    assert "Status: needs setup" in text
+    assert S.HEADER in text
+    assert f"{S.STATUS_LABEL} {S.STATUS_NEEDS_SETUP}" in text
     assert "hello" in text

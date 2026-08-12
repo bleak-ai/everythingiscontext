@@ -6,7 +6,8 @@ against the connection.yaml files under connections/, and renders the text
 the setup prompt shows verbatim. build_explain_report renders the explain
 prompt's report the same way: the agent list without an agent id, the
 per-agent Does / Connects / Learns / Flow block with one. Code owns these
-reports; the model never rewrites them.
+reports; the model never rewrites them. Every wording token lives in
+report_strings.py; this module owns only the computation and the layout.
 """
 
 import textwrap
@@ -15,9 +16,9 @@ from pathlib import Path
 
 import yaml
 
+from . import report_strings as S
 from .commands import parse_command
 
-HEADER = "Welcome to gcontext"
 SETUP_FIELD = "setup"
 SETUP_PENDING = "pending"
 _MIN_PAD = 15
@@ -78,25 +79,25 @@ def _connection_rows(declared: list, available: set[str]) -> list[tuple[str, boo
         if isinstance(kind, str) and kind:
             rows.append((kind, kind in available))
         else:
-            rows.append(("(no kind)", False))
+            rows.append((S.NO_KIND, False))
     return rows
 
 
 def _status(meta: dict, rows: list[tuple[str, bool]]) -> str:
     if meta.get(SETUP_FIELD) == SETUP_PENDING:
-        return "needs setup"
+        return S.STATUS_NEEDS_SETUP
     if not all(matched for _, matched in rows):
-        return "connection missing"
-    return "ready"
+        return S.STATUS_CONNECTION_MISSING
+    return S.STATUS_READY
 
 
 def _agent_block(agent_id: str, meta: dict, declared: list, available: set[str]) -> str:
-    lines = [f"Agent: {agent_id}", "", "Connections"]
+    lines = [f"{S.AGENT_LABEL} {agent_id}", "", S.CONNECTIONS_HEADING]
     rows = _connection_rows(declared, available)
     pad = max(max(len(label) for label, _ in rows) + 5, _MIN_PAD)
     for label, matched in rows:
-        lines.append(f"  {label:<{pad}}{'OK' if matched else 'MISSING'}")
-    lines.extend(["", f"Status: {_status(meta, rows)}"])
+        lines.append(f"  {label:<{pad}}{S.CONNECTION_OK if matched else S.CONNECTION_MISSING}")
+    lines.extend(["", f"{S.STATUS_LABEL} {_status(meta, rows)}"])
     return "\n".join(lines)
 
 
@@ -105,13 +106,13 @@ def build_setup_report(project_dir: Path) -> str:
     project_dir = Path(project_dir)
     agents = _agents(project_dir)
     if not agents:
-        return f"{HEADER}\nNo agents installed."
+        return f"{S.HEADER}\n{S.NO_AGENTS}"
     available = _available_kinds(project_dir)
     blocks = [
         _agent_block(agent_id, meta, declared, available)
         for agent_id, meta, declared, _path in agents
     ]
-    return HEADER + "\n" + "\n\n".join(blocks)
+    return S.HEADER + "\n" + "\n\n".join(blocks)
 
 
 def _labeled(label: str, value_lines: list[str]) -> list[str]:
@@ -150,30 +151,31 @@ def _learns_lines(module_dir: Path, meta: dict) -> list[str]:
         if not item.is_dir() or item.name.startswith((".", "__")):
             continue
         n = len(_module_files(item))
-        lines.append(f"{item.name}/  {n} files")
+        lines.append(f"{item.name}/  {n} {S.FILES_WORD}")
     files = _module_files(module_dir)
     if files:
         newest = max(f.stat().st_mtime for f in files)
         stamp = datetime.fromtimestamp(newest).strftime("%Y-%m-%d")
-        lines.append(f"last activity  {stamp}")
+        lines.append(f"{S.LAST_ACTIVITY_LABEL}  {stamp}")
     return lines
 
 
 def _explain_block(agent_id: str, meta: dict, declared: list, available: set[str], module_dir: Path) -> str:
-    lines = [f"Agent: {agent_id}", ""]
-    lines.extend(_labeled("Does", _wrapped(meta.get("description") or "(no description)")))
+    lines = [f"{S.AGENT_LABEL} {agent_id}", ""]
+    lines.extend(_labeled(S.DOES_LABEL, _wrapped(meta.get("description") or "(no description)")))
     rows = _connection_rows(declared, available)
     pad = max(max(len(label) for label, _ in rows) + 5, _MIN_PAD)
-    lines.extend(_labeled("Connects", [
-        f"{label:<{pad}}{'OK' if matched else 'MISSING'}" for label, matched in rows
+    lines.extend(_labeled(S.CONNECTS_LABEL, [
+        f"{label:<{pad}}{S.CONNECTION_OK if matched else S.CONNECTION_MISSING}"
+        for label, matched in rows
     ]))
-    lines.extend(_labeled("Learns", _learns_lines(module_dir, meta)))
+    lines.extend(_labeled(S.LEARNS_LABEL, _learns_lines(module_dir, meta)))
     flow = meta.get("flow")
     if isinstance(flow, list) and flow:
         flow_lines = [f"{i}. {step}" for i, step in enumerate(flow, 1)]
     else:
-        flow_lines = ["not declared"]
-    lines.extend(_labeled("Flow", flow_lines))
+        flow_lines = [S.FLOW_NOT_DECLARED]
+    lines.extend(_labeled(S.FLOW_LABEL, flow_lines))
     return "\n".join(lines)
 
 
@@ -189,10 +191,10 @@ def build_explain_report(project_dir: Path, agent: str | None = None) -> str:
     agents = _agents(project_dir)
     if not agent:
         if not agents:
-            return f"{HEADER}\nNo agents installed."
+            return f"{S.HEADER}\n{S.NO_AGENTS}"
         available = _available_kinds(project_dir)
         pad = max(max(len(a[0]) for a in agents) + 5, _MIN_PAD)
-        lines = [HEADER]
+        lines = [S.HEADER]
         for agent_id, meta, declared, _path in agents:
             rows = _connection_rows(declared, available)
             lines.append(f"{agent_id:<{pad}}{_status(meta, rows)}")
@@ -200,5 +202,5 @@ def build_explain_report(project_dir: Path, agent: str | None = None) -> str:
     for agent_id, meta, declared, path in agents:
         if agent_id == agent:
             return _explain_block(agent_id, meta, declared, _available_kinds(project_dir), path)
-    ids = ", ".join(a[0] for a in agents) if agents else "none"
-    return f'Unknown agent "{agent}". Installed agents: {ids}.'
+    ids = ", ".join(a[0] for a in agents) if agents else S.NO_INSTALLED_IDS
+    return S.UNKNOWN_AGENT.format(agent=agent, ids=ids)

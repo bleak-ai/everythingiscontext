@@ -20,7 +20,7 @@ Connections
 Status: needs setup
 ```
 
-One line per declared connection, status `OK` or `MISSING`. An agent never set up shows `Status: needs setup`. An agent with a lost connection shows `Status: connection missing`. When everything is satisfied: `Status: ready`.
+One line per declared connection, status `OK` or `MISSING`. An agent never set up shows `Status: needs setup`. An agent with a lost connection shows `Status: connection missing`. When everything is satisfied: `Status: ready`. The wording of these reports (headings, labels, status words) lives in `gcontext/report_strings.py`, the single source of truth; the report tests import those constants, and the examples in this document illustrate the current values.
 
 ### Block 2: the plan
 
