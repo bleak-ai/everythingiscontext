@@ -15,7 +15,7 @@ This document is the template spec: the contract an agent folder must follow to 
     1-init.md
     ...
   commands/           # required: entry points
-    setup.md          #   required: the install interview (see setup contract)
+    setup.md          #   optional: agent-specific setup steps (see setup contract)
     run.md            #   required: the run driver (see run command contract)
   functions/          # optional: per-step helper library
     2-transform/
@@ -49,7 +49,7 @@ parameters:                  # what a run starts with; bound at setup or per run
     description: Limit operations to one project
     required: false
 connections:                 # service capabilities the agent needs
-  - kind: http-api           # generic kind, not a product name
+  - kind: deploy-target      # capability kind from the enum in docs/setup-script.md
     description: The hosting panel API (Coolify, Dokploy, or similar)
 tags: [ops, infrastructure]  # directory filtering
 ---
@@ -59,7 +59,7 @@ Two more fields are optional. Add them when they apply:
 
 ```yaml
 connections:
-  - kind: http-api
+  - kind: ticket-tracker
     description: The ticket tracker API (Linear, Jira, or similar)
     examples: [Linear, Jira, GitHub Issues]   # optional: product names, shown on the site
 learns: >
@@ -71,7 +71,7 @@ Field notes:
 - `id` is the identity everywhere: the install argument, the folder name, the site slug. Lowercase letters, digits, hyphens.
 - `name` is the display name for the directory and the agent page; the id stays the machine identity.
 - `parameters` are slots, not values. The setup interview or the run start binds them. Never ship bound values.
-- `connections` entries are structured (`kind` plus `description`) so the site can render them as requirement badges. They name capability kinds, not products. The body of `index.md` may mention concrete services as examples; the steps must not depend on one (see docs/modules.md on connection-agnostic modules). The agent maps kinds to its own `connections/` at run time.
+- `connections` entries are structured (`kind` plus `description`) so the site can render them as requirement badges. They name capability kinds, not products; the valid `kind` values are the fixed enum in docs/setup-script.md. The body of `index.md` may mention concrete services as examples; the steps must not depend on one (see docs/modules.md on connection-agnostic modules). The agent maps kinds to its own `connections/` at run time.
 - `connections[].examples` is optional: a list of product names (Linear, Jira, GitHub Issues) shown on the site for that connection, without binding the agent to any one of them.
 - `learns` is optional prose describing what the agent accumulates over time (playbooks, quirks of the user's instance). It renders as the Learns section on the site. Omit it when the agent has nothing to say here.
 - `tags` is a flat list for the directory. Keep it short.
@@ -134,7 +134,7 @@ Ships in the template:
 
 - `index.md` with the frontmatter manifest
 - `steps/`
-- `commands/setup.md` and `commands/run.md`
+- `commands/run.md`, and `commands/setup.md` when the agent has one
 - `functions/` when the agent has them
 - `runs/example/`: the example run
 
@@ -158,9 +158,11 @@ The example run has two jobs:
 
 The folder name `example` (instead of a run key) is what marks it fabricated. The setup command leaves it in place.
 
+Fabricated content is allowed outside `runs/example/` too, but it must be labeled: any content a template seeds outside `runs/example/` carries an `example-` prefix in its name, so the user and the AI can tell seeded samples from real work.
+
 ## The setup command contract
 
-`commands/setup.md` is the bridge from template to personal instance. It is an interview: the agent asks, the user answers in plain words, the agent builds and confirms. The contract:
+`commands/setup.md` is optional: the manifest alone covers agents whose setup is only connections. When present, it is the bridge from template to personal instance and follows the contract in docs/setup-script.md: numbered agent-specific steps only, no greeting, no report, no completion text, no format instructions. It is an interview: the agent asks, the user answers in plain words, the agent builds and confirms. The contract:
 
 1. **Read first**: the command starts by instructing the AI to read the agent's `index.md` and `steps/index.md` so the interview is informed.
 2. **Bind every parameter slot**: ask for each manifest parameter that is bound at setup time (per-run parameters are only explained, not bound).

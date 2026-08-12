@@ -178,6 +178,7 @@ Developing the dashboard itself needs node: `make web-dev` runs a Vite dev serve
 - [docs/connections.md](docs/connections.md): the connection reference, from manifest fields to smoke tests
 - [docs/modules.md](docs/modules.md): writing portable, shareable modules
 - [docs/agents.md](docs/agents.md): the agent template standard, the contract for distributable context-based agents
+- [docs/setup-script.md](docs/setup-script.md): the setup script standard, every text a user reads during install and setup
 - [docs/share-agent.md](docs/share-agent.md): instructions an author's agent follows to turn a lived agent into a shareable template
 
 ## Scope
