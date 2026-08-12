@@ -29,6 +29,9 @@ RESET = "\033[0m"
 
 DEFAULT_PORT = 4242
 
+# The restart rule from docs/setup-script.md: one wording, reused everywhere.
+RESTART_RULE = "Restart the server (stop, `gcontext up`), then reconnect in your client (`/mcp` in Claude Code)."
+
 STATUS_COLOR = {
     "loaded": GREEN,
     "on demand": DIM,
@@ -125,19 +128,22 @@ def cmd_init(args):
     from gcontext.telemetry import ping_install
     ping_install(install_id, __version__)
 
-    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} created {name} at {target}")
+    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} created {name}")
+    print(f"{DIM}State: {target}{RESET}")
     print()
     print("The folder IS your agent's state: version it with git, edit it freely.")
     if os.environ.get("GCONTEXT_TELEMETRY") != "0":
         print(f"{DIM}Sent anonymous install event. Disable with GCONTEXT_TELEMETRY=0{RESET}")
     print()
     pad = min(max(len(f"gcontext up {args.directory}"), len(f"/mcp__{name}__setup")) + 4, 44)
-    print("Next steps:")
+    print("Steps:")
     print(f"  1. {f'gcontext up {args.directory}':<{pad}}  start the server")
     print(f"  2. {'connect your client':<{pad}}  the up banner prints the exact command per client")
-    print(f"  3. {f'/mcp__{name}__setup':<{pad}}  in the client: describe what the agent should do, it builds the rest")
+    print(f"  3. {f'run /mcp__{name}__setup':<{pad}}  in the client: describe what the agent should do, it builds the rest")
     print()
     print(f"{DIM}See what reaches the agent, anytime: gcontext context {args.directory}{RESET}")
+    print()
+    print(f"Next: run gcontext up {args.directory} to start the server.")
 
 
 def find_project_dir(path: str | None) -> Path:
@@ -237,7 +243,7 @@ def cmd_up(args):
     n_base_lines, n_instruction_lines = server.load_instructions()
     server.snapshot_startup_files()
 
-    print(f"{BOLD}gcontext{RESET} {DIM}{__version__} -{RESET} {name}")
+    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} serving {name} {DIM}({__version__}){RESET}")
     print(f"{DIM}State: {project_dir}{RESET}")
     print()
     print(f"Serving at {BOLD}{url}{RESET}")
@@ -268,6 +274,8 @@ def cmd_up(args):
     print("Connections appear below as clients attach. Ctrl+C stops the server,")
     print("and every client cleanly loses access.")
     print()
+    print("Next: connect your client with the command above (already connected: /mcp to reconnect).")
+    print()
 
     server.mcp.run(
         transport="http", host="127.0.0.1", port=port, path="/mcp",
@@ -286,12 +294,13 @@ def cmd_status(args):
 
     name = config.get("name", project_dir.name)
     desc = config.get("description", "")
-    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {name}")
+    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} status of {name}")
     if desc:
         print(f"{DIM}{desc}{RESET}")
     print(f"{DIM}State: {project_dir}{RESET}")
     print()
 
+    needs_restart = False
     live = fetch_status(port)
     if live is None:
         print(f"Server: {YELLOW}not running{RESET} {DIM}(start it: gcontext up){RESET}")
@@ -310,6 +319,7 @@ def cmd_status(args):
             print(f"  {YELLOW}agent.md changed since server start; restart to push the new version{RESET}")
         if stale.get("commands"):
             print(f"  {YELLOW}commands changed since server start; restart to re-register them{RESET}")
+        needs_restart = bool(stale.get("agent_md") or stale.get("commands"))
     print()
 
     instructions = project_dir / "agent.md"
@@ -343,6 +353,9 @@ def cmd_status(args):
         print()
 
     print(f"{DIM}No runtime included. Point any MCP client at the URL above.{RESET}")
+    if needs_restart:
+        print()
+        print(f"Next: {RESTART_RULE}")
 
 
 def cmd_connect(args):
@@ -434,11 +447,14 @@ def cmd_add(args):
             print("  https://gcontext.ai/agents/", file=sys.stderr)
         sys.exit(1)
 
+    config = state.load_gcontext_yaml(project_dir)
+    server_name = config.get("name", project_dir.name)
     rel = result["path"]
     print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} installed {result['name']} ({result['count']} files) at {rel}/")
     print()
-    print("Next step: personalize it. (Re)start the server and tell your agent:")
-    print(f"  \"Run the setup in {rel}/commands/setup.md\"")
+    print(RESTART_RULE)
+    print()
+    print(f"Next: run /mcp__{server_name}__setup in your client.")
 
 
 def validate_template(folder: Path) -> dict:

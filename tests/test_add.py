@@ -111,8 +111,12 @@ def test_add_installs_bundle_into_modules(registry, agent):
             assert "setup: pending" in installed
         else:
             assert installed == f["content"]
-    assert "Demo Flow" in result.stdout
-    assert "commands/setup.md" in result.stdout
+    assert "installed Demo Flow (5 files) at modules/demo-flow/" in result.stdout
+    assert (
+        "Restart the server (stop, `gcontext up`), then reconnect in your client"
+        " (`/mcp` in Claude Code)." in result.stdout
+    )
+    assert "Next: run /mcp__a__setup in your client." in result.stdout
 
 
 def test_add_existing_module_warns_and_stops(registry, agent):
