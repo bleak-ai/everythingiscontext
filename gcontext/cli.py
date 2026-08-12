@@ -17,6 +17,7 @@ from . import commands as commands_mod
 from . import exec as exec_mod
 from . import ledger as ledger_mod
 from . import registry as registry_mod
+from .kinds import CONNECTION_KINDS
 from . import secrets as secrets_mod
 from . import server
 from . import state
@@ -490,6 +491,25 @@ def validate_template(folder: Path) -> dict:
         print("Error: id must be lowercase letters, digits, and hyphens.", file=sys.stderr)
         sys.exit(1)
 
+    valid_kinds = ", ".join(CONNECTION_KINDS)
+    connections = meta.get("connections")
+    if connections is not None and not isinstance(connections, list):
+        print("Error: 'connections' must be a list of entries with a 'kind'.", file=sys.stderr)
+        sys.exit(1)
+    for entry in connections or []:
+        kind = entry.get("kind") if isinstance(entry, dict) else None
+        if not kind:
+            print(f"Error: every connections entry needs a 'kind'. Valid kinds: {valid_kinds}.", file=sys.stderr)
+            sys.exit(1)
+        if kind not in CONNECTION_KINDS:
+            print(f"Error: connection kind '{kind}' is not in the enum. Valid kinds: {valid_kinds}.", file=sys.stderr)
+            sys.exit(1)
+
+    flow = meta.get("flow")
+    if not isinstance(flow, list) or not flow or not all(isinstance(s, str) and s.strip() for s in flow):
+        print("Error: 'flow' must be a non-empty list of strings (the agent's loop, one line per beat).", file=sys.stderr)
+        sys.exit(1)
+
     if not (folder / "steps").is_dir():
         print("Error: steps/ folder not found.", file=sys.stderr)
         sys.exit(1)
@@ -497,6 +517,39 @@ def validate_template(folder: Path) -> dict:
     if not (folder / "runs" / "example").is_dir():
         print("Error: runs/example/ folder not found.", file=sys.stderr)
         sys.exit(1)
+
+    runs = folder / "runs"
+    if runs.is_dir():
+        offenders = sorted(
+            p.name for p in runs.iterdir()
+            if not p.name.startswith(".") and not (p.name == "example" and p.is_dir())
+        )
+        if offenders:
+            print(f"Error: runs/ may contain only the example/ folder; found: {', '.join(offenders)}.", file=sys.stderr)
+            sys.exit(1)
+
+    setup_path = folder / "commands" / "setup.md"
+    if setup_path.exists():
+        try:
+            setup_meta, setup_body = parse_command(setup_path.read_text(encoding="utf-8"))
+        except ValueError as e:
+            print(f"Error: commands/setup.md: {e}.", file=sys.stderr)
+            sys.exit(1)
+        if not setup_meta.get("description"):
+            print("Error: commands/setup.md frontmatter is missing 'description'.", file=sys.stderr)
+            sys.exit(1)
+        first_line = next((ln.strip() for ln in setup_body.splitlines() if ln.strip()), "")
+        heading = re.match(r"^#\s+(.*)$", first_line)
+        if heading:
+            text = heading.group(1).strip()
+            if text == "Setup" or text.startswith("Welcome"):
+                print(
+                    "Error: commands/setup.md opens with a greeting heading. "
+                    "setup.md supplies steps only; the framework owns the dialogue "
+                    "(see docs/setup-script.md).",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
 
     return meta
 

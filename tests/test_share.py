@@ -11,10 +11,23 @@ INDEX_MD = """---
 id: test-flow
 name: Test Flow
 description: A test agent.
+connections:
+  - kind: browser
+    description: A browser to drive.
+flow:
+  - Ask for a page
+  - The agent opens it and reports back
 tags: [test]
 ---
 
 Objective paragraph.
+"""
+
+SETUP_MD = """---
+description: Set up the test agent.
+---
+
+1. Ask which page to start from.
 """
 
 
@@ -64,7 +77,22 @@ def template(tmp_path):
     example = t / "runs" / "example"
     example.mkdir(parents=True)
     (example / "index.md").write_text("# Example\n")
+    commands = t / "commands"
+    commands.mkdir()
+    (commands / "setup.md").write_text(SETUP_MD)
     return t
+
+
+def _index_md(**overrides):
+    """INDEX_MD with one frontmatter block swapped or removed (value None)."""
+    import yaml
+    meta = yaml.safe_load(INDEX_MD.split("---")[1])
+    for key, value in overrides.items():
+        if value is None:
+            meta.pop(key, None)
+        else:
+            meta[key] = value
+    return f"---\n{yaml.safe_dump(meta)}---\n\nObjective paragraph.\n"
 
 
 def test_share_validates_and_prints_pr_instructions(template, request_log):
@@ -201,6 +229,106 @@ def test_share_missing_example_run(tmp_path):
     result = run_cli("share", str(folder), cwd=tmp_path)
     assert result.returncode == 1
     assert "runs/example/ folder not found" in result.stderr
+
+
+def test_share_compliant_template_passes(template):
+    result = run_cli("share", str(template), cwd=template.parent)
+    assert result.returncode == 0, result.stderr
+    assert "validated test-flow" in result.stdout
+
+
+def test_share_rejects_unknown_connection_kind(template):
+    (template / "index.md").write_text(
+        _index_md(connections=[{"kind": "chrome", "description": "x"}])
+    )
+    result = run_cli("share", str(template), cwd=template.parent)
+    assert result.returncode == 1
+    assert "connection kind 'chrome' is not in the enum" in result.stderr
+    assert "browser" in result.stderr
+    assert "ticket-tracker" in result.stderr
+
+
+def test_share_rejects_connection_without_kind(template):
+    (template / "index.md").write_text(
+        _index_md(connections=[{"description": "no kind here"}])
+    )
+    result = run_cli("share", str(template), cwd=template.parent)
+    assert result.returncode == 1
+    assert "every connections entry needs a 'kind'" in result.stderr
+    assert "browser" in result.stderr
+
+
+def test_share_rejects_missing_flow(template):
+    (template / "index.md").write_text(_index_md(flow=None))
+    result = run_cli("share", str(template), cwd=template.parent)
+    assert result.returncode == 1
+    assert "'flow' must be a non-empty list of strings" in result.stderr
+
+
+def test_share_rejects_empty_flow(template):
+    (template / "index.md").write_text(_index_md(flow=[]))
+    result = run_cli("share", str(template), cwd=template.parent)
+    assert result.returncode == 1
+    assert "'flow' must be a non-empty list of strings" in result.stderr
+
+
+def test_share_rejects_non_string_flow(template):
+    (template / "index.md").write_text(_index_md(flow=[{"step": "nope"}]))
+    result = run_cli("share", str(template), cwd=template.parent)
+    assert result.returncode == 1
+    assert "'flow' must be a non-empty list of strings" in result.stderr
+
+
+def test_share_rejects_stray_runs_entries(template):
+    (template / "runs" / "2026-01-01-real").mkdir()
+    (template / "runs" / "notes.md").write_text("x")
+    result = run_cli("share", str(template), cwd=template.parent)
+    assert result.returncode == 1
+    assert "runs/ may contain only the example/ folder" in result.stderr
+    assert "2026-01-01-real" in result.stderr
+    assert "notes.md" in result.stderr
+
+
+def test_share_rejects_setup_md_without_description(template):
+    (template / "commands" / "setup.md").write_text("---\nx: y\n---\n\n1. Do.\n")
+    result = run_cli("share", str(template), cwd=template.parent)
+    assert result.returncode == 1
+    assert "commands/setup.md frontmatter is missing 'description'" in result.stderr
+
+
+def test_share_rejects_setup_md_without_frontmatter(template):
+    (template / "commands" / "setup.md").write_text("1. Do.\n")
+    result = run_cli("share", str(template), cwd=template.parent)
+    assert result.returncode == 1
+    assert "commands/setup.md" in result.stderr
+    assert "frontmatter" in result.stderr
+
+
+def test_share_rejects_setup_md_greeting_heading(template):
+    (template / "commands" / "setup.md").write_text(
+        "---\ndescription: d\n---\n\n# Setup\n\n1. Do.\n"
+    )
+    result = run_cli("share", str(template), cwd=template.parent)
+    assert result.returncode == 1
+    assert "greeting heading" in result.stderr
+    assert "framework owns the dialogue" in result.stderr
+
+
+def test_share_rejects_setup_md_welcome_heading(template):
+    (template / "commands" / "setup.md").write_text(
+        "---\ndescription: d\n---\n\n# Welcome to the test agent\n\n1. Do.\n"
+    )
+    result = run_cli("share", str(template), cwd=template.parent)
+    assert result.returncode == 1
+    assert "greeting heading" in result.stderr
+
+
+def test_share_allows_setup_md_step_heading(template):
+    (template / "commands" / "setup.md").write_text(
+        "---\ndescription: d\n---\n\n# Extra questions\n\n1. Do.\n"
+    )
+    result = run_cli("share", str(template), cwd=template.parent)
+    assert result.returncode == 0, result.stderr
 
 
 def test_share_skips_dotfiles(template):
