@@ -22,6 +22,9 @@ STATUS_NEEDS_SETUP = "needs setup"
 STATUS_CONNECTION_MISSING = "connection missing"
 STATUS_READY = "ready"
 
+# Install report (agent tool and `gcontext add`)
+INSTALLED_DEPENDENCY_LINE = "Installed {name} ({count} files) at {path}/ (required by {required_by})."
+
 # Explain report
 DOES_LABEL = "Does"
 CONNECTS_LABEL = "Connects"

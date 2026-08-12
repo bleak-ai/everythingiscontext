@@ -169,6 +169,11 @@ def validate_bundle(files) -> dict:
     for field in ("id", "name", "description"):
         if not meta.get(field):
             raise ValueError(f"index.md frontmatter is missing '{field}'")
+    agents = meta.get("agents")
+    if agents is not None and (
+        not isinstance(agents, list) or not all(isinstance(a, str) and a for a in agents)
+    ):
+        raise ValueError("'agents' must be a list of agent ids")
     return meta
 
 
@@ -230,6 +235,20 @@ def _ping_download(agent_id: str) -> None:
         pass
 
 
+def _write_module(module_dir: Path, meta: dict, files: list[dict], ref: str):
+    for f in files:
+        dest = module_dir / f["path"]
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        content = f["content"]
+        if f["path"] == "index.md":
+            content = stamp_setup_pending(content)
+        dest.write_text(content)
+
+    # Hashes cover the unstamped registry content: once setup removes the
+    # `setup: pending` line, the module reads as unmodified again.
+    write_manifest(module_dir, meta["id"], ref, files)
+
+
 def install_agent(project_dir: Path, source: str) -> dict:
     is_registry_install = not ("://" in source or source.startswith("github.com/"))
     if is_registry_install:
@@ -249,24 +268,45 @@ def install_agent(project_dir: Path, source: str) -> dict:
             "Installs are snapshots: your copy is personalized and is never overwritten."
         )
 
-    for f in files:
-        dest = module_dir / f["path"]
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        content = f["content"]
-        if f["path"] == "index.md":
-            content = stamp_setup_pending(content)
-        dest.write_text(content)
+    # Resolve the declared `agents:` dependencies before writing anything,
+    # so a bad dependency never leaves a half-installed set. An id already
+    # present under modules/ is satisfied; the visited set breaks cycles.
+    to_write = [(meta, files, ref, "")]
+    visited = {meta["id"]}
+    pending = [(dep_id, meta["id"]) for dep_id in meta.get("agents") or []]
+    while pending:
+        dep_id, required_by = pending.pop(0)
+        if dep_id in visited:
+            continue
+        visited.add(dep_id)
+        if (project_dir / "modules" / dep_id).exists():
+            continue
+        dep_files, dep_ref = fetch_agent_by_id(dep_id)
+        try:
+            dep_meta = validate_bundle(dep_files)
+        except ValueError as e:
+            raise RegistryError(f"invalid agent bundle for '{dep_id}': {e}")
+        pending.extend((d, dep_id) for d in dep_meta.get("agents") or [])
+        to_write.append((dep_meta, dep_files, dep_ref, required_by))
 
-    # Hashes cover the unstamped registry content: once setup removes the
-    # `setup: pending` line, the module reads as unmodified again.
-    write_manifest(module_dir, meta["id"], ref, files)
+    dependencies = []
+    for m, fl, r, required_by in to_write:
+        _write_module(project_dir / "modules" / m["id"], m, fl, r)
+        if required_by:
+            dependencies.append({
+                "id": m["id"], "name": m["name"], "count": len(fl),
+                "path": f"modules/{m['id']}", "required_by": required_by,
+            })
 
     if is_registry_install and (
         os.environ.get("GCONTEXT_API") or registry_spec() == DEFAULT_REGISTRY
     ):
         _ping_download(meta["id"])
 
-    return {"id": meta["id"], "name": meta["name"], "count": len(files), "path": f"modules/{meta['id']}"}
+    return {
+        "id": meta["id"], "name": meta["name"], "count": len(files),
+        "path": f"modules/{meta['id']}", "dependencies": dependencies,
+    }
 
 
 # --- Catalog (search) ---

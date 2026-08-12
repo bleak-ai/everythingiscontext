@@ -5,7 +5,9 @@ Four actions:
 - **search**: find agents in the registry. Pass a query to filter by id,
   name, description, or tags; omit it to list all available agents.
 - **install**: install an agent by id into modules/. Refuses if the module
-  already exists. After install, run the setup command to personalize it.
+  already exists. Agents the manifest requires (its `agents:` list) are
+  installed in the same run when missing; each one is named in the result.
+  After install, run the setup command to personalize it.
 - **check**: compare installed agents against the registry. Reports which
   files changed upstream, which you modified locally, and which changed on
   both sides. Pass an id to check one, or omit it to check all.

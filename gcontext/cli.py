@@ -452,6 +452,11 @@ def cmd_add(args):
     server_name = config.get("name", project_dir.name)
     rel = result["path"]
     print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} installed {result['name']} ({result['count']} files) at {rel}/")
+    for dep in result.get("dependencies", []):
+        print(
+            f"{BOLD}gcontext{RESET} {DIM}-{RESET} installed {dep['name']} "
+            f"({dep['count']} files) at {dep['path']}/ (required by {dep['required_by']})"
+        )
     print()
     print(RESTART_RULE)
     print()
@@ -504,6 +509,42 @@ def validate_template(folder: Path) -> dict:
         if kind not in CONNECTION_KINDS:
             print(f"Error: connection kind '{kind}' is not in the enum. Valid kinds: {valid_kinds}.", file=sys.stderr)
             sys.exit(1)
+
+    agents = meta.get("agents")
+    if agents is not None:
+        if not isinstance(agents, list) or not all(
+            isinstance(a, str) and ID_RE.match(a) for a in agents
+        ):
+            print("Error: 'agents' must be a list of agent ids (lowercase letters, digits, and hyphens).", file=sys.stderr)
+            sys.exit(1)
+        if agent_id in agents:
+            print("Error: an agent cannot require itself.", file=sys.stderr)
+            sys.exit(1)
+        if agents:
+            try:
+                catalog = registry_mod.load_catalog()
+            except registry_mod.RegistryError:
+                print("Warning: could not reach the registry; required agent ids not verified.")
+                catalog = None
+            if catalog is not None:
+                by_id = {e.get("id"): e for e in catalog}
+                for dep in agents:
+                    if dep not in by_id:
+                        print(f"Error: required agent '{dep}' is not in the registry.", file=sys.stderr)
+                        sys.exit(1)
+                # Walk the dependency chains in the catalog; reaching this
+                # agent's own id again means the requirement graph has a cycle.
+                seen = set()
+                stack = list(agents)
+                while stack:
+                    current = stack.pop()
+                    if current == agent_id:
+                        print(f"Error: dependency cycle: '{agent_id}' is required by one of its own required agents.", file=sys.stderr)
+                        sys.exit(1)
+                    if current in seen:
+                        continue
+                    seen.add(current)
+                    stack.extend(by_id.get(current, {}).get("agents") or [])
 
     flow = meta.get("flow")
     if not isinstance(flow, list) or not flow or not all(isinstance(s, str) and s.strip() for s in flow):

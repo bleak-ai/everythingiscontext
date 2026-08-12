@@ -73,7 +73,7 @@ The module grows over time as the agent adds playbooks and logs. Each copy diver
 ## What makes a good module
 
 - **`index.md` is self-contained.** Anyone reading it (human or agent) should understand the module's purpose in the first paragraph.
-- **Connection-agnostic.** Never reference specific services by name in the agent's steps. Say "the payment provider" not "Stripe."
+- **Name nothing you have not declared.** Never reference specific services by name in the agent's steps: say "the payment provider", not "Stripe". The one exception is a registry agent declared in the manifest's `agents:` list; install guarantees it is present, so the steps may name it directly.
 - **Process over implementation.** Describe what to do, not how to call a specific API. The connection's `index.md` handles the API details.
 - **Grows with use.** Playbooks and logs are empty when downloaded. They fill up as the agent works.
 

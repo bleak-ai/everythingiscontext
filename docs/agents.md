@@ -68,6 +68,7 @@ connections:
   - kind: ticket-tracker
     description: The ticket tracker API (Linear, Jira, or similar)
     examples: [Linear, Jira, GitHub Issues]   # optional: product names, shown on the site
+agents: [browser-recipes]    # registry agents this agent requires
 learns: >
   Playbooks per incident type and the quirks of your instance.
 ```
@@ -79,6 +80,7 @@ Field notes:
 - `parameters` are slots, not values. The setup interview or the run start binds them. Never ship bound values.
 - `connections` entries are structured (`kind` plus `description`) so the site can render them as requirement badges. They name capability kinds, not products; the valid `kind` values are the fixed enum in docs/setup-script.md. The body of `index.md` may mention concrete services as examples; the steps must not depend on one (see docs/modules.md on connection-agnostic modules). The agent maps kinds to its own `connections/` at run time.
 - `connections[].examples` is optional: a list of product names (Linear, Jira, GitHub Issues) shown on the site for that connection, without binding the agent to any one of them.
+- `agents` is optional: a list of concrete registry agent ids this agent requires. Unlike connections, entries name a specific agent, not a capability: the dependency is on that agent's files and commands. Install resolves the list recursively and installs what is missing; an id already present under `modules/` is satisfied. The site renders each entry as a Requires badge. A declared dependency may be named directly in the steps; the rule is "name nothing you have not declared" (see docs/modules.md).
 - `flow` is an ordered list of short strings: the agent's loop as the user experiences it, one line per beat, typically 4 to 6 entries. Each entry says what the user does or what the agent does back, in plain words, no internal vocabulary. The explain command renders it as the numbered Flow section and walks it step by step. The field is optional in code; the validator will require it for distributable agents.
 - `learns` is optional prose describing what the agent accumulates over time (playbooks, quirks of the user's instance). It renders as the Learns section on the site. Omit it when the agent has nothing to say here.
 - `tags` is a flat list for the directory. Keep it short.

@@ -33,6 +33,7 @@ from . import commands as commands_mod
 from . import exec as exec_mod
 from . import fs
 from . import registry as registry_mod
+from . import report_strings
 from . import secrets as secrets_mod
 from . import state
 
@@ -486,12 +487,15 @@ def agent(action: str, id: str = "", query: str = "") -> str:
         except (registry_mod.RegistryError, ValueError) as e:
             return f"Error: {e}."
         _register_module_commands(result["id"])
+        for dep in result.get("dependencies", []):
+            _register_module_commands(dep["id"])
         _notify_prompts_changed()
         snapshot_startup_files()
-        return (
-            f"Installed {result['name']} ({result['count']} files) at {result['path']}/.\n"
-            f"Next step: run the setup in {result['path']}/commands/setup.md"
-        )
+        lines = [f"Installed {result['name']} ({result['count']} files) at {result['path']}/."]
+        for dep in result.get("dependencies", []):
+            lines.append(report_strings.INSTALLED_DEPENDENCY_LINE.format(**dep))
+        lines.append(f"Next step: run the setup in {result['path']}/commands/setup.md")
+        return "\n".join(lines)
 
     elif action == "check":
         try:
