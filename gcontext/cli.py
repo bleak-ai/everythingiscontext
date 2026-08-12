@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 
 from . import __version__
+from . import commands as commands_mod
 from . import exec as exec_mod
 from . import ledger as ledger_mod
 from . import registry as registry_mod
@@ -258,7 +259,8 @@ def cmd_up(args):
         print(f"Instructions: framework ({n_base_lines} lines) + agent.md ({n_instruction_lines} lines), pushed to every agent at connect.")
     else:
         print(f"{YELLOW}Instructions: no agent.md, agents receive only the framework instructions ({n_base_lines} lines) at connect.{RESET}")
-    prompt_bits = [f"{n_framework_prompts} built-in (setup)"]
+    builtin_names = ", ".join(p.stem for p in commands_mod.discover_framework_prompts())
+    prompt_bits = [f"{n_framework_prompts} built-in ({builtin_names})"]
     if n_commands:
         prompt_bits.append(f"{n_commands} project command(s)")
     print(f"Prompts: {' + '.join(prompt_bits)} as MCP prompts (slash commands in Claude Code).")

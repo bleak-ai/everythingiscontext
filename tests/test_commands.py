@@ -108,12 +108,12 @@ def test_prompt_rejects_missing_required_argument(tmp_path):
 def test_commands_ledger_pipe(project):
     _write_commands(project)
     g6 = [p for p in ledger.build(project) if p["id"] == "G6"]
-    assert g6 and "1 built-in (setup) + 2 project command(s)" in g6[0]["detail"]
+    assert g6 and "4 built-in (agents, ask, explain, setup) + 2 project command(s)" in g6[0]["detail"]
 
 
 def test_register_framework_prompts_setup():
     mcp = FastMCP("t")
-    assert commands.register_framework_prompts(mcp) == 3
+    assert commands.register_framework_prompts(mcp) == 4
 
     async def go():
         async with Client(mcp) as c:

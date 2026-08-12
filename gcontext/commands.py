@@ -96,14 +96,15 @@ def _render_fn(body: str, params: list[dict[str, Any]], extra=None):
     """A render function whose signature carries the declared parameters, so
     FastMCP derives the prompt arguments (and rejects missing required ones).
 
-    `extra` is an optional zero-arg callable returning additional
-    substitutions, computed at invocation time (server-filled placeholders
-    like $setup_report, alongside the user-supplied ones like $request)."""
+    `extra` is an optional callable taking the invocation arguments and
+    returning additional substitutions, computed at invocation time
+    (server-filled placeholders like $setup_report and $explain_report,
+    alongside the user-supplied ones like $request)."""
 
     def render(**kwargs: str) -> str:
         values = dict(kwargs)
         if extra is not None:
-            values.update(extra())
+            values.update(extra(values))
         return Template(body).safe_substitute(**values)
 
     sig_params = [
@@ -145,19 +146,25 @@ def register_framework_prompts(mcp, root: Path | None = None) -> int:
     """Register the framework's own prompts, shipped in the package.
 
     Same file format as project commands, but framework-owned: they update
-    with the package and exist in every instance. Currently one: `setup`,
-    the guided add-a-connection / add-a-module / health-check flow.
+    with the package and exist in every instance. Currently two: `setup`,
+    the guided add-a-connection / add-a-module / health-check flow, and
+    `explain`, the what-is-this-agent walkthrough.
 
-    When `root` is given, the $setup_report placeholder is filled at
-    invocation time with the code-built report for that project.
+    When `root` is given, the $setup_report and $explain_report
+    placeholders are filled at invocation time with the code-built reports
+    for that project; $explain_report uses the prompt's `agent` argument
+    when one was passed.
     """
     from fastmcp.prompts.prompt import Prompt
 
     extra = None
     if root is not None:
-        def extra():
-            from .report import build_setup_report
-            return {"setup_report": build_setup_report(root)}
+        def extra(values):
+            from .report import build_explain_report, build_setup_report
+            return {
+                "setup_report": build_setup_report(root),
+                "explain_report": build_explain_report(root, values.get("agent") or None),
+            }
 
     prompts_dir = Path(__file__).parent / "prompts"
     count = 0
