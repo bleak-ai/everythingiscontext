@@ -43,13 +43,18 @@ def build(checkout: Path) -> dict:
                 continue
             files.append(str(f.relative_to(d)))
 
-        agents.append({
+        entry = {
             "id": meta["id"],
             "name": meta.get("name", meta["id"]),
             "description": meta.get("description", ""),
             "tags": meta.get("tags", []),
             "files": files,
-        })
+        }
+        # Required registry agents; the share validator walks these to
+        # verify ids and detect cycles. Omitted when the agent has none.
+        if meta.get("agents"):
+            entry["agents"] = meta["agents"]
+        agents.append(entry)
 
     agents.sort(key=lambda a: a["id"])
     return {
