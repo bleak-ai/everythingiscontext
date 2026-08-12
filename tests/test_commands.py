@@ -129,5 +129,12 @@ def test_register_framework_prompts_setup():
     assert '""' in empty_text and "$request" not in empty_text
     filled_text = filled.messages[0].content.text
     assert "add a slack connection" in filled_text
-    for step in ("Add a connection", "Add a module", "Health check", "Propose the plan"):
+    for step in (
+        "Block 1: the report",
+        "Block 2: the plan",
+        "Block 3: questions",
+        "Block 4: build progress",
+        "Block 5: examples explained",
+        "Block 6: completion",
+    ):
         assert step in filled_text
