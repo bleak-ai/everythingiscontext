@@ -1,6 +1,6 @@
-"""Build registry.json from a workflows repo checkout.
+"""Build registry.json from an agents repo checkout.
 
-Usage: uv run scripts/build_registry.py <path-to-workflows-checkout>
+Usage: uv run scripts/build_registry.py <path-to-agents-checkout>
 
 Scans each top-level directory for an index.md with valid frontmatter,
 collects id/name/description/tags and the file list, and writes
@@ -16,7 +16,7 @@ from pathlib import Path
 def build(checkout: Path) -> dict:
     from gcontext.commands import parse_command
 
-    workflows = []
+    agents = []
     for d in sorted(checkout.iterdir()):
         if not d.is_dir() or d.name.startswith("."):
             continue
@@ -43,7 +43,7 @@ def build(checkout: Path) -> dict:
                 continue
             files.append(str(f.relative_to(d)))
 
-        workflows.append({
+        agents.append({
             "id": meta["id"],
             "name": meta.get("name", meta["id"]),
             "description": meta.get("description", ""),
@@ -51,16 +51,16 @@ def build(checkout: Path) -> dict:
             "files": files,
         })
 
-    workflows.sort(key=lambda w: w["id"])
+    agents.sort(key=lambda a: a["id"])
     return {
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "workflows": workflows,
+        "agents": agents,
     }
 
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: uv run scripts/build_registry.py <path-to-workflows-checkout>")
+        print("Usage: uv run scripts/build_registry.py <path-to-agents-checkout>")
         sys.exit(1)
 
     checkout = Path(sys.argv[1]).resolve()
@@ -72,9 +72,9 @@ def main():
     out = checkout / "registry.json"
     out.write_text(json.dumps(catalog, indent=2) + "\n")
 
-    for w in catalog["workflows"]:
-        print(f"  {w['id']} ({len(w['files'])} files)")
-    print(f"\n{len(catalog['workflows'])} workflows written to {out}")
+    for a in catalog["agents"]:
+        print(f"  {a['id']} ({len(a['files'])} files)")
+    print(f"\n{len(catalog['agents'])} agents written to {out}")
 
 
 if __name__ == "__main__":

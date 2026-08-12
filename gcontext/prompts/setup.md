@@ -39,12 +39,38 @@ The user's request, possibly empty: "$request"
 - Verify at the end. A connection is done when a smoke test passes, a module
   is done when its index.md reads back correctly, never before.
 
+## Detection pass
+
+Before proposing anything new, check whether the modules already present
+are actually operational. List modules/, and for each module read its
+index.md frontmatter: a `connections:` list, each entry with kind,
+description, and sometimes examples. Compare those against the folders
+under connections/: a declared connection is satisfied when an existing
+connection's kind and description cover that capability, not just when the
+names happen to match.
+
+If every module's declared connections are satisfied, this pass has
+nothing to say; move straight to Step 1. If any module has unsatisfied
+connections, your FIRST message to the user states, in plain words, which
+modules are not yet operational and which capabilities are missing, and
+offers to build exactly those first. This report is not skippable: it
+comes before any question, including questions from a module's own setup.
+Jumping straight into an interview hides the gap and takes away the user's
+chance to decline. If the user declines, continue with the normal steps.
+
+When the module ships commands/setup.md, do not improvise the interview
+yourself: read the module's commands/setup.md with read_file and follow it
+for the module-specific questions, but only AFTER the user has accepted
+the offer above. This pass only detects and offers; the module's own setup
+does the asking.
+
 ## Step 1: Inspect
 
-Call list_dir(".") and list_dir on connections/ and modules/ if they exist.
-Note what is already there: which connections, which modules, whether
-agent.md is still the init placeholder ("Describe what this agent is
-for..."). This is your map, not the user's briefing.
+Call list_dir(".") and list_dir on connections/ and modules/ if they exist
+(reuse what the detection pass already listed). Note what is already
+there: which connections, which modules, whether agent.md is still the
+init placeholder ("Describe what this agent is for..."). This is your map,
+not the user's briefing.
 
 ## Step 2: Understand what the user wants
 
@@ -56,8 +82,9 @@ text and adapted to what you found:
   services and tools it should be able to use, what you want to ask of it."
 - Instance with existing state: say in one or two lines what the agent
   already has (in plain words, not folder names) and ask what they want to
-  add or change. If something looks broken or half-finished, mention it and
-  offer to fix it as part of the work.
+  add or change. If something looks broken or half-finished (beyond what
+  the detection pass already offered), mention it and offer to fix it as
+  part of the work.
 
 Let them answer in one messy paragraph. That is the expected input, not a
 special case. Ask at most one or two follow-ups if the answer leaves you
