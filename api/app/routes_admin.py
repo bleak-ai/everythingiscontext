@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Header, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from . import settings
@@ -41,3 +41,9 @@ def list_installs(session: Session = Depends(get_session)):
         }
         for r in rows
     ]
+
+
+@router.delete("/installs/{install_id}", status_code=204)
+def delete_install(install_id: str, session: Session = Depends(get_session)):
+    session.execute(delete(Install).where(Install.install_id == install_id))
+    session.commit()
