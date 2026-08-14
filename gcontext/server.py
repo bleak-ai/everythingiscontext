@@ -384,7 +384,12 @@ def read_file(path: str) -> str:
 
 @mcp.tool(description=_tool_doc("write_file"), output_schema=None)
 def write_file(path: str, content: str) -> str:
-    return fs.write_file(PROJECT_DIR, path, content)
+    result = fs.write_file(PROJECT_DIR, path, content)
+    try:
+        commands_mod.refresh_generated(mcp, PROJECT_DIR, path)
+    except Exception as e:
+        print(f"  ! generated-command refresh failed: {e}", file=sys.stderr)
+    return result
 
 
 @mcp.tool(description=_tool_doc("list_dir"), output_schema=None)

@@ -35,10 +35,22 @@ How the folder is organized:
   - <name>.py: a script command. Starts with the same frontmatter as a
     `# ---` comment block; invoking it tells the agent to run the file via
     run_script with the arguments as params.
+  A `.md` command whose frontmatter declares `each: <glob>` is a template:
+  it registers one prompt per state folder the glob matches inside its
+  owner, named `<stem>_<match>` with hyphens normalized to underscores
+  (no owner prefix; it returns only when the short name collides), and
+  `$each` in the body bound to the folder name. Per-entry description and parameters come from a `---`
+  frontmatter block at the top of the matched folder's index.md when it has
+  one. An entry parameter may declare `default: <value>`: the argument
+  becomes optional in the runtime's picker, and the injected body notes the
+  default so the executing agent applies it when the value is empty.
+  Entries re-register after every write, but the runtime's command
+  list refreshes only on reconnect: after creating an entry, tell the user
+  to reconnect the client (/mcp in Claude Code) to see its command.
   When the user asks for a reusable command or agent entry point, this
   is where it goes: write the file with write_file under the connection or
-  module it belongs to. New commands appear after a server restart, which
-  the user must do; tell them.
+  module it belongs to. New command files appear after a server restart,
+  which the user must do; tell them.
 - archive/: retired state. Not scanned or listed, still readable by path.
 
 How state grows: one topic per module. A folder's index.md is its map and

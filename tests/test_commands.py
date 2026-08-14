@@ -111,6 +111,191 @@ def test_commands_ledger_pipe(project):
     assert g6 and "4 built-in (agents, ask, explain, setup) + 2 project command(s)" in g6[0]["detail"]
 
 
+EACH_TEMPLATE = """\
+---
+description: Run a saved recipe
+each: recipes/*/
+---
+Execute recipe `$each` for $month.
+"""
+
+RECIPE_INDEX = """\
+---
+description: Export invoices as CSV
+parameters:
+  - name: month
+    required: true
+  - name: format
+    description: Output format
+---
+# export-invoices
+"""
+
+
+def _write_template(root):
+    tpl = root / "modules" / "cookbook" / "commands" / "recipe.md"
+    tpl.parent.mkdir(parents=True)
+    tpl.write_text(EACH_TEMPLATE)
+    rec = root / "modules" / "cookbook" / "recipes" / "export-invoices"
+    rec.mkdir(parents=True)
+    (rec / "index.md").write_text(RECIPE_INDEX)
+    bare = root / "modules" / "cookbook" / "recipes" / "check-orders"
+    bare.mkdir()
+    (bare / "index.md").write_text("# check orders, no frontmatter\n")
+
+
+async def _prompts(mcp):
+    async with Client(mcp) as c:
+        return await c.list_prompts()
+
+
+def test_template_expands_one_prompt_per_entry(tmp_path):
+    _write_template(tmp_path)
+    mcp = FastMCP("t")
+    assert commands.register_commands(mcp, tmp_path) == 2
+
+    async def go():
+        async with Client(mcp) as c:
+            listed = await c.list_prompts()
+            filled = await c.get_prompt(
+                "recipe_export_invoices",
+                {"month": "2026-07", "format": "csv"},
+            )
+            return {p.name: p.description for p in listed}, filled
+
+    prompts, filled = asyncio.run(go())
+    assert prompts["recipe_export_invoices"] == "Export invoices as CSV"
+    # entry without frontmatter falls back to the template's description
+    assert prompts["recipe_check_orders"] == "Run a saved recipe"
+    text = filled.messages[0].content.text
+    assert "`export-invoices`" in text and "$each" not in text
+    assert "2026-07" in text and "$month" not in text
+    # `format` is not referenced by the template body: appended automatically
+    assert 'format: "csv"' in text
+
+
+def test_template_param_default_is_optional_and_noted(tmp_path):
+    _write_template(tmp_path)
+    rec = tmp_path / "modules" / "cookbook" / "recipes" / "export-contacts"
+    rec.mkdir(parents=True)
+    (rec / "index.md").write_text(
+        "---\n"
+        "description: Export contacts\n"
+        "parameters:\n"
+        "  - name: month\n"
+        "    required: true\n"
+        "  - name: out\n"
+        "    description: Output path\n"
+        "    required: true\n"
+        "    default: contacts.csv\n"
+        "---\n# export-contacts\n"
+    )
+    mcp = FastMCP("t")
+    commands.register_commands(mcp, tmp_path)
+
+    async def go():
+        async with Client(mcp) as c:
+            listed = await c.list_prompts()
+            # `out` has a default, so invoking without it must succeed
+            filled = await c.get_prompt(
+                "recipe_export_contacts", {"month": "2026-07"}
+            )
+            return listed, filled
+
+    listed, filled = asyncio.run(go())
+    args = {
+        a.name: a.required
+        for p in listed
+        if p.name == "recipe_export_contacts"
+        for a in p.arguments
+    }
+    # a default overrides required: true; the argument is optional
+    assert args == {"month": True, "out": False}
+    text = filled.messages[0].content.text
+    assert 'out: "contacts.csv" (default when empty: contacts.csv)' in text
+
+
+def test_template_skips_entry_with_malformed_default(tmp_path):
+    _write_template(tmp_path)
+    rec = tmp_path / "modules" / "cookbook" / "recipes" / "bad-default"
+    rec.mkdir(parents=True)
+    (rec / "index.md").write_text(
+        "---\n"
+        "description: Bad\n"
+        "parameters:\n"
+        "  - name: out\n"
+        "    default: [a, b]\n"
+        "---\nx\n"
+    )
+    mcp = FastMCP("t")
+    # the two healthy entries from _write_template still expand
+    assert commands.register_commands(mcp, tmp_path) == 2
+    names = {p.name for p in asyncio.run(_prompts(mcp))}
+    assert "recipe_bad_default" not in names
+
+
+def test_template_skips_malformed_entry_and_escaping_glob(tmp_path):
+    _write_template(tmp_path)
+    bad = tmp_path / "modules" / "cookbook" / "recipes" / "broken"
+    bad.mkdir()
+    (bad / "index.md").write_text("---\ndescription: [unclosed\n---\nx\n")
+    escape = tmp_path / "modules" / "cookbook" / "commands" / "sneaky.md"
+    escape.write_text("---\ndescription: x\neach: ../../*/\n---\nx\n")
+    mcp = FastMCP("t")
+    assert commands.register_commands(mcp, tmp_path) == 2
+    names = {p.name for p in asyncio.run(_prompts(mcp))}
+    assert "recipe_broken" not in names
+    assert not any("sneaky" in n for n in names)
+
+
+def test_template_collision_falls_back_to_owner_prefix(tmp_path):
+    _write_template(tmp_path)
+    other = tmp_path / "modules" / "cookbook2" / "commands" / "recipe.md"
+    other.parent.mkdir(parents=True)
+    other.write_text(EACH_TEMPLATE)
+    rec = tmp_path / "modules" / "cookbook2" / "recipes" / "export-invoices"
+    rec.mkdir(parents=True)
+    (rec / "index.md").write_text(RECIPE_INDEX)
+    mcp = FastMCP("t")
+    commands.register_commands(mcp, tmp_path)
+    names = {p.name for p in asyncio.run(_prompts(mcp))}
+    # first template (sorted order) takes the short name, second falls back
+    assert "recipe_export_invoices" in names
+    assert "cookbook2__recipe_export_invoices" in names
+
+
+def test_refresh_generated_tracks_entry_changes(tmp_path):
+    _write_template(tmp_path)
+    mcp = FastMCP("t")
+    commands.register_commands(mcp, tmp_path)
+
+    new = tmp_path / "modules" / "cookbook" / "recipes" / "find-posts"
+    new.mkdir()
+    (new / "index.md").write_text("---\ndescription: Find posts\n---\nx\n")
+    commands.refresh_generated(
+        mcp, tmp_path, "modules/cookbook/recipes/find-posts/index.md"
+    )
+    names = {p.name for p in asyncio.run(_prompts(mcp))}
+    assert "recipe_find_posts" in names
+
+    new.rename(tmp_path / "modules" / "cookbook" / "recipes" / "find-articles")
+    commands.refresh_generated(
+        mcp, tmp_path, "modules/cookbook/recipes/find-articles/index.md"
+    )
+    names = {p.name for p in asyncio.run(_prompts(mcp))}
+    assert "recipe_find_articles" in names
+    assert "recipe_find_posts" not in names
+
+
+def test_refresh_generated_ignores_unrelated_paths(tmp_path):
+    _write_template(tmp_path)
+    mcp = FastMCP("t")
+    commands.register_commands(mcp, tmp_path)
+    before = {p.name for p in asyncio.run(_prompts(mcp))}
+    commands.refresh_generated(mcp, tmp_path, "modules/other/notes.md")
+    assert {p.name for p in asyncio.run(_prompts(mcp))} == before
+
+
 def test_register_framework_prompts_setup():
     mcp = FastMCP("t")
     assert commands.register_framework_prompts(mcp) == 4

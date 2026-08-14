@@ -14,6 +14,16 @@ text enters context only when the user invokes it.
   `params` (which the server turns into `PARAM_<NAME>` environment variables).
 
 Commands are discovered once at server startup; restart to pick up new files.
+One exception: a `.md` command whose frontmatter declares `each: <glob>` is a
+template. It registers one prompt per state folder the glob matches inside its
+owner (`<stem>_<match>` with hyphens normalized to underscores and no owner
+prefix, so the name stays matchable in the client's picker; the prefix returns
+only on a name collision; `$each` bound to the folder name), taking
+description and parameters from frontmatter in the matched folder's index.md
+when present (a parameter may declare `default: <value>`, which makes the
+argument optional and is echoed in the appended Arguments line). Templates
+re-expand after every write_file, so a new entry needs only a client
+reconnect, not a server restart.
 """
 
 from __future__ import annotations
@@ -111,7 +121,9 @@ def _render_fn(body: str, params: list[dict[str, Any]], extra=None):
         inspect.Parameter(
             p["name"],
             inspect.Parameter.KEYWORD_ONLY,
-            default=inspect.Parameter.empty if p.get("required", False) else "",
+            default=inspect.Parameter.empty
+            if p.get("required", False)
+            else str(p["default"]) if p.get("default") is not None else "",
             annotation=str,
         )
         for p in params
@@ -119,6 +131,172 @@ def _render_fn(body: str, params: list[dict[str, Any]], extra=None):
     render.__signature__ = inspect.Signature(sig_params)
     render.__annotations__ = {p["name"]: str for p in params} | {"return": str}
     return render
+
+
+# Template expansion state, rebuilt by register_commands() at startup.
+# GENERATED maps template file path -> {"owner_dir": str, "names": set[str]};
+# _REGISTERED holds every registered prompt name, file-based and generated,
+# so generated names never shadow a real command file (files win).
+GENERATED: dict[str, dict] = {}
+_REGISTERED: set[str] = set()
+
+
+def _is_template(path: Path) -> bool:
+    if path.suffix != ".md":
+        return False
+    try:
+        meta, _ = parse_command(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError, yaml.YAMLError):
+        return False
+    return "each" in meta
+
+
+def _entry_frontmatter(index_path: Path) -> dict[str, Any] | None:
+    """Frontmatter of a generated entry's index.md.
+
+    Returns {} when the file is missing or has no frontmatter (the entry still
+    registers with the template's own description), and None when frontmatter
+    is present but malformed (the entry is skipped, loudly)."""
+    try:
+        text = index_path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    if text.split("\n", 1)[0].strip() != FRONTMATTER_DELIM:
+        return {}
+    try:
+        meta, _ = parse_command(text)
+        return meta
+    except (ValueError, yaml.YAMLError):
+        return None
+
+
+def _normalize_params(params: Any) -> list[dict[str, Any]] | None:
+    """Validate a generated entry's parameter list.
+
+    A parameter may declare `default: <scalar>`; a default makes the prompt
+    argument optional regardless of `required`, because a value always exists.
+    Returns None when the list is malformed (non-mapping items, missing name,
+    non-scalar default), so the caller skips that entry loudly."""
+    if not isinstance(params, list):
+        return None
+    out: list[dict[str, Any]] = []
+    for p in params:
+        if not isinstance(p, dict) or not p.get("name"):
+            return None
+        if "default" in p and p["default"] is not None:
+            if isinstance(p["default"], (dict, list)):
+                return None
+            p = {**p, "required": False}
+        out.append(p)
+    return out
+
+
+def _expand_template(mcp, root: Path, path: Path) -> int:
+    """Register one prompt per folder matched by the template's `each` glob.
+
+    Re-reads the template file so refresh_generated() picks up edits too.
+    Returns the number of prompts registered."""
+    from fastmcp.prompts.prompt import Prompt
+
+    owner_dir = path.parent.parent
+    owner = owner_dir.name
+    try:
+        meta, body = parse_command(path.read_text(encoding="utf-8"))
+        pattern = str(meta["each"])
+    except (ValueError, KeyError, OSError, yaml.YAMLError) as e:
+        print(f"  ! skipping command {path}: {e}", file=sys.stderr)
+        return 0
+    if pattern.startswith("/") or ".." in Path(pattern).parts:
+        print(f"  ! skipping command {path}: each glob must stay inside "
+              f"{owner}/", file=sys.stderr)
+        return 0
+
+    names: set[str] = set()
+    count = 0
+    for match in sorted(owner_dir.glob(pattern)):
+        if not match.is_dir():
+            continue
+        # Generated names deviate from the `<owner>__<command>` convention on
+        # purpose, both quirks probed against the real client (2026-08-14):
+        # - Underscores, not hyphens: the slash-command filter drops a
+        #   hyphenated name when the query ends exactly at a hyphen word
+        #   boundary ("recipe-sample" vs "recipe-sample-recipe").
+        # - No owner prefix: the filter scores the query against the full
+        #   canonical name (mcp__<server>__<name>); the longer the unmatched
+        #   prefix, the shorter the query that still matches, and the owner
+        #   segment alone pushes real names over the cliff.
+        # The owner prefix returns only as a collision fallback.
+        short = f"{path.stem}_{match.name}".replace("-", "_")
+        name = short if short not in _REGISTERED else f"{owner}__{short}"
+        entry_meta = _entry_frontmatter(match / "index.md")
+        if entry_meta is None:
+            print(f"  ! skipping generated command {name}: malformed "
+                  f"frontmatter in {match / 'index.md'}", file=sys.stderr)
+            continue
+        if name in _REGISTERED:
+            print(f"  ! skipping generated command {name}: name already "
+                  "taken by a command file", file=sys.stderr)
+            continue
+        description = entry_meta.get("description") or meta.get("description", "")
+        params = _normalize_params(entry_meta.get("parameters") or [])
+        if params is None:
+            print(f"  ! skipping generated command {name}: malformed "
+                  f"parameters in {match / 'index.md'}", file=sys.stderr)
+            continue
+        entry_body = Template(body).safe_substitute(each=match.name)
+        # A template cannot know the entry's parameter names, so any declared
+        # parameter its body does not reference is appended explicitly;
+        # otherwise the invocation values would never reach the agent.
+        unreferenced = [
+            p for p in params
+            if f"${p['name']}" not in entry_body
+            and "${%s}" % p["name"] not in entry_body
+        ]
+        if unreferenced:
+            rendered = ", ".join(
+                f'{p["name"]}: "${p["name"]}"'
+                + (f' (default when empty: {p["default"]})'
+                   if p.get("default") is not None else "")
+                for p in unreferenced
+            )
+            entry_body += f"\n\nArguments: {rendered}"
+        try:
+            fn = _render_fn(entry_body, params)
+            fn.__name__ = name
+            mcp.add_prompt(
+                Prompt.from_function(fn, name=name, description=description)
+            )
+        except Exception as e:
+            print(f"  ! could not register prompt {name}: {e}", file=sys.stderr)
+            continue
+        _REGISTERED.add(name)
+        names.add(name)
+        count += 1
+    GENERATED[str(path)] = {"owner_dir": str(owner_dir), "names": names}
+    return count
+
+
+def refresh_generated(mcp, root: Path, written_path: str) -> None:
+    """Re-expand every template whose owner folder contains the written path.
+
+    Called by the server after each successful write_file, so a new or changed
+    entry is registered at runtime; the client sees it after a reconnect
+    (Claude Code ignores prompts/list_changed, verified 2026-08-14)."""
+    rel = written_path.strip("/")
+    for template, info in list(GENERATED.items()):
+        try:
+            owner_rel = Path(info["owner_dir"]).relative_to(root).as_posix()
+        except ValueError:
+            continue
+        if not rel.startswith(owner_rel + "/"):
+            continue
+        for name in info["names"]:
+            try:
+                mcp._local_provider.remove_prompt(name)
+            except Exception:
+                pass
+            _REGISTERED.discard(name)
+        _expand_template(mcp, root, Path(template))
 
 
 def discover(root: Path) -> list[Path]:
@@ -205,16 +383,25 @@ def _register_one(mcp, root: Path, path: Path) -> bool:
     except Exception as e:
         print(f"  ! could not register prompt {name}: {e}", file=sys.stderr)
         return False
+    _REGISTERED.add(name)
     return True
 
 
 def register_commands(mcp, root: Path) -> int:
     """Scan connection and module `commands/` folders and register each file
-    as a prompt named `<owner>__<command>`."""
+    as a prompt named `<owner>__<command>`. Command files register first,
+    templates (`each:`) expand after, so a file always wins a name clash."""
+    GENERATED.clear()
+    _REGISTERED.clear()
     count = 0
+    templates: list[Path] = []
     for path in discover(root):
-        if _register_one(mcp, root, path):
+        if _is_template(path):
+            templates.append(path)
+        elif _register_one(mcp, root, path):
             count += 1
+    for path in templates:
+        count += _expand_template(mcp, root, path)
     return count
 
 
@@ -224,8 +411,14 @@ def register_module_commands(mcp, root: Path, module_name: str) -> int:
     if not commands_dir.is_dir():
         return 0
     count = 0
+    templates: list[Path] = []
     for path in sorted(commands_dir.glob("*")):
-        if path.suffix in (".md", ".py"):
-            if _register_one(mcp, root, path):
-                count += 1
+        if path.suffix not in (".md", ".py"):
+            continue
+        if _is_template(path):
+            templates.append(path)
+        elif _register_one(mcp, root, path):
+            count += 1
+    for path in templates:
+        count += _expand_template(mcp, root, path)
     return count
