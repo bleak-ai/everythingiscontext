@@ -6,8 +6,12 @@ import urllib.request
 DEFAULT_API = "https://api.gcontext.ai"
 
 
+def _is_dev_install() -> bool:
+    return "site-packages" not in os.path.abspath(__file__)
+
+
 def ping_install(install_id: str, version: str) -> None:
-    if os.environ.get("GCONTEXT_TELEMETRY") == "0":
+    if os.environ.get("GCONTEXT_TELEMETRY") == "0" or _is_dev_install():
         return
     try:
         payload = json.dumps({

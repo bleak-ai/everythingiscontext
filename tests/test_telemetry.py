@@ -28,7 +28,9 @@ def test_ping_install_sends_payload():
     t = Thread(target=server.handle_request, daemon=True)
     t.start()
 
-    with patch.dict("os.environ", {"GCONTEXT_API": f"http://127.0.0.1:{port}"}):
+    # the suite runs from the dev checkout, which the dev-install guard mutes
+    with patch.dict("os.environ", {"GCONTEXT_API": f"http://127.0.0.1:{port}"}), \
+         patch("gcontext.telemetry._is_dev_install", return_value=False):
         ping_install("test-uuid-123", "0.5.0")
 
     t.join(timeout=5)
