@@ -131,7 +131,7 @@ Anything under `archive/` is skipped when scanning, but stays readable by path, 
 
 ## Commands
 
-A command is a user-invokable entry point stored next to the knowledge it belongs to: a file under `connections/<name>/commands/` or `modules/<name>/commands/`. The server registers each one as an MCP prompt named `<owner>__<command>`; Claude Code shows it as a slash command (`/mcp__<server>__<owner>__<command>`). Prompts cost no tool-schema context: a command's text enters the conversation only when you invoke it.
+A command is a user-invokable entry point stored next to the knowledge it belongs to: a file under `connections/<name>/commands/` or `modules/<name>/commands/`. The server registers each one as an MCP prompt named after the file stem (hyphens as underscores); Claude Code shows it as a slash command (`/mcp__<server>__<command>`). When two owners ship the same stem, or the stem matches a framework prompt name, the name becomes `<owner>__<command>` instead. Prompts cost no tool-schema context: a command's text enters the conversation only when you invoke it.
 
 Two file types:
 

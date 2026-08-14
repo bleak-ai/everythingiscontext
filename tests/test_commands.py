@@ -78,12 +78,12 @@ def test_prompt_roundtrip_over_protocol(tmp_path):
         async with Client(mcp) as c:
             listed = await c.list_prompts()
             names = sorted(p.name for p in listed)
-            md = await c.get_prompt("support__refund_reply", {"email": "a@b.c"})
-            py = await c.get_prompt("stripe__cancel", {"email": "a@b.c"})
+            md = await c.get_prompt("refund_reply", {"email": "a@b.c"})
+            py = await c.get_prompt("cancel", {"email": "a@b.c"})
             return names, md, py
 
     names, md, py = asyncio.run(go())
-    assert names == ["stripe__cancel", "support__refund_reply"]
+    assert names == ["cancel", "refund_reply"]
     md_text = md.messages[0].content.text
     assert "a@b.c" in md_text and "$email" not in md_text
     py_text = py.messages[0].content.text
@@ -99,7 +99,7 @@ def test_prompt_rejects_missing_required_argument(tmp_path):
 
     async def go():
         async with Client(mcp) as c:
-            await c.get_prompt("support__refund_reply", {})
+            await c.get_prompt("refund_reply", {})
 
     with pytest.raises(Exception):
         asyncio.run(go())
@@ -109,6 +109,101 @@ def test_commands_ledger_pipe(project):
     _write_commands(project)
     g6 = [p for p in ledger.build(project) if p["id"] == "G6"]
     assert g6 and "4 built-in (agents, ask, explain, setup) + 2 project command(s)" in g6[0]["detail"]
+
+
+def test_file_command_hyphens_normalized(tmp_path):
+    d = tmp_path / "modules" / "ops" / "commands"
+    d.mkdir(parents=True)
+    (d / "sync-data.md").write_text("---\ndescription: d\n---\nbody")
+    mcp = FastMCP("t")
+    commands.register_commands(mcp, tmp_path)
+    names = {p.name for p in asyncio.run(_prompts(mcp))}
+    assert "sync_data" in names
+
+
+def test_file_command_collision_both_prefixed(tmp_path):
+    for owner_kind, owner in (("connections", "stripe"), ("modules", "support")):
+        d = tmp_path / owner_kind / owner / "commands"
+        d.mkdir(parents=True)
+        (d / "export.md").write_text("---\ndescription: d\n---\nbody")
+    mcp = FastMCP("t")
+    commands.register_commands(mcp, tmp_path)
+    names = {p.name for p in asyncio.run(_prompts(mcp))}
+    assert "stripe__export" in names
+    assert "support__export" in names
+    assert "export" not in names
+
+
+def test_file_command_framework_names_reserved(tmp_path):
+    d = tmp_path / "modules" / "support" / "commands"
+    d.mkdir(parents=True)
+    (d / "setup.md").write_text("---\ndescription: d\n---\nbody")
+    mcp = FastMCP("t")
+    commands.register_commands(mcp, tmp_path)
+    names = {p.name for p in asyncio.run(_prompts(mcp))}
+    assert "support__setup" in names
+    assert "setup" not in names
+
+
+def test_register_module_commands_short_then_prefixed(tmp_path):
+    d1 = tmp_path / "modules" / "a" / "commands"
+    d1.mkdir(parents=True)
+    (d1 / "deploy.md").write_text("---\ndescription: d\n---\nbody")
+    mcp = FastMCP("t")
+    commands.register_commands(mcp, tmp_path)
+    d2 = tmp_path / "modules" / "b" / "commands"
+    d2.mkdir(parents=True)
+    (d2 / "deploy.md").write_text("---\ndescription: d\n---\nbody")
+    commands.register_module_commands(mcp, tmp_path, "b")
+    names = {p.name for p in asyncio.run(_prompts(mcp))}
+    assert "deploy" in names
+    assert "b__deploy" in names
+
+
+def test_same_owner_stem_clash_registers_one(tmp_path):
+    d = tmp_path / "modules" / "ops" / "commands"
+    d.mkdir(parents=True)
+    (d / "sync.md").write_text("---\ndescription: d\n---\nbody")
+    (d / "sync.py").write_text(PY_COMMAND)
+    mcp = FastMCP("t")
+    assert commands.register_commands(mcp, tmp_path) == 1
+    names = [p.name for p in asyncio.run(_prompts(mcp))]
+    assert names.count("ops__sync") == 1
+    assert len(names) == 1
+
+
+def test_collision_prefixed_names_normalize_hyphens(tmp_path):
+    for owner in ("my-ops", "your-ops"):
+        d = tmp_path / "modules" / owner / "commands"
+        d.mkdir(parents=True)
+        (d / "export-csv.md").write_text("---\ndescription: d\n---\nbody")
+    mcp = FastMCP("t")
+    commands.register_commands(mcp, tmp_path)
+    names = {p.name for p in asyncio.run(_prompts(mcp))}
+    assert "my_ops__export_csv" in names
+    assert "your_ops__export_csv" in names
+    assert not any("-" in n for n in names)
+
+
+def test_register_module_commands_reregister_keeps_name(tmp_path):
+    d = tmp_path / "modules" / "foo" / "commands"
+    d.mkdir(parents=True)
+    (d / "deploy.md").write_text("---\ndescription: d\n---\nversion one")
+    mcp = FastMCP("t")
+    commands.register_commands(mcp, tmp_path)
+    (d / "deploy.md").write_text("---\ndescription: d\n---\nversion two")
+    commands.register_module_commands(mcp, tmp_path, "foo")
+    names = [p.name for p in asyncio.run(_prompts(mcp))]
+    assert names.count("deploy") == 1
+    assert "foo__deploy" not in names
+
+    # the re-registered prompt serves the new body
+    async def go():
+        async with Client(mcp) as c:
+            r = await c.get_prompt("deploy", {})
+            return r.messages[0].content.text
+
+    assert "version two" in asyncio.run(go())
 
 
 EACH_TEMPLATE = """\
@@ -262,6 +357,28 @@ def test_template_collision_falls_back_to_owner_prefix(tmp_path):
     # first template (sorted order) takes the short name, second falls back
     assert "recipe_export_invoices" in names
     assert "cookbook2__recipe_export_invoices" in names
+
+
+def test_module_file_evicts_generated_short_name(tmp_path):
+    _write_template(tmp_path)
+    mcp = FastMCP("t")
+    commands.register_commands(mcp, tmp_path)
+    d = tmp_path / "modules" / "newmod" / "commands"
+    d.mkdir(parents=True)
+    (d / "recipe_export_invoices.md").write_text(
+        "---\ndescription: d\n---\nfile body wins"
+    )
+    commands.register_module_commands(mcp, tmp_path, "newmod")
+    names = [p.name for p in asyncio.run(_prompts(mcp))]
+    assert names.count("recipe_export_invoices") == 1
+    assert "newmod__recipe_export_invoices" not in names
+
+    async def go():
+        async with Client(mcp) as c:
+            r = await c.get_prompt("recipe_export_invoices", {})
+            return r.messages[0].content.text
+
+    assert "file body wins" in asyncio.run(go())
 
 
 def test_refresh_generated_tracks_entry_changes(tmp_path):

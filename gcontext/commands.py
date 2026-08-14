@@ -2,9 +2,13 @@
 exposed as MCP prompts.
 
 Two file types (design ported from the maat-agent S13 spike). Both surface as
-slash commands in Claude Code (`/mcp__<server>__<owner>__<command>`); neither
-adds a tool, so the tool list stays at the six generic tools and the command
-text enters context only when the user invokes it.
+slash commands in Claude Code (`/mcp__<server>__<command>`); neither adds a
+tool, so the tool list stays at the six generic tools and the command text
+enters context only when the user invokes it. A command's name is its bare
+file stem with hyphens as underscores when that short name is unique; it
+becomes `<owner>__<command>` (hyphens normalized the same way) when two
+owners collide (all colliders get the prefix) or when the stem matches a
+framework prompt name.
 
 - `.md` (prompt command): the rendered body is injected into the conversation
   and the agent acts on it. `$name` placeholders are filled from the prompt
@@ -16,9 +20,9 @@ text enters context only when the user invokes it.
 Commands are discovered once at server startup; restart to pick up new files.
 One exception: a `.md` command whose frontmatter declares `each: <glob>` is a
 template. It registers one prompt per state folder the glob matches inside its
-owner (`<stem>_<match>` with hyphens normalized to underscores and no owner
-prefix, so the name stays matchable in the client's picker; the prefix returns
-only on a name collision; `$each` bound to the folder name), taking
+owner, following the same naming rule as file commands (`<stem>_<match>` with
+hyphens normalized to underscores; the owner prefix returns only on a name
+collision; `$each` bound to the folder name), taking
 description and parameters from frontmatter in the matched folder's index.md
 when present (a parameter may declare `default: <value>`, which makes the
 argument optional and is echoed in the appended Arguments line). Templates
@@ -135,10 +139,21 @@ def _render_fn(body: str, params: list[dict[str, Any]], extra=None):
 
 # Template expansion state, rebuilt by register_commands() at startup.
 # GENERATED maps template file path -> {"owner_dir": str, "names": set[str]};
-# _REGISTERED holds every registered prompt name, file-based and generated,
-# so generated names never shadow a real command file (files win).
+# _REGISTERED maps every registered prompt name to its source key ("framework"
+# for reserved framework names, the file path for file commands, the template
+# path for generated names), so generated names never shadow a real command
+# file (files win) and re-registering the same file keeps its name.
 GENERATED: dict[str, dict] = {}
-_REGISTERED: set[str] = set()
+_REGISTERED: dict[str, str] = {}
+
+
+def _short_name(stem: str) -> str:
+    return stem.replace("-", "_")
+
+
+def _reserved_names() -> set[str]:
+    """Framework prompt names; file commands never take these short names."""
+    return {p.stem for p in discover_framework_prompts()}
 
 
 def _is_template(path: Path) -> bool:
@@ -216,18 +231,9 @@ def _expand_template(mcp, root: Path, path: Path) -> int:
     for match in sorted(owner_dir.glob(pattern)):
         if not match.is_dir():
             continue
-        # Generated names deviate from the `<owner>__<command>` convention on
-        # purpose, both quirks probed against the real client (2026-08-14):
-        # - Underscores, not hyphens: the slash-command filter drops a
-        #   hyphenated name when the query ends exactly at a hyphen word
-        #   boundary ("recipe-sample" vs "recipe-sample-recipe").
-        # - No owner prefix: the filter scores the query against the full
-        #   canonical name (mcp__<server>__<name>); the longer the unmatched
-        #   prefix, the shorter the query that still matches, and the owner
-        #   segment alone pushes real names over the cliff.
-        # The owner prefix returns only as a collision fallback.
+        # Naming rule and picker rationale: see register_commands.
         short = f"{path.stem}_{match.name}".replace("-", "_")
-        name = short if short not in _REGISTERED else f"{owner}__{short}"
+        name = short if short not in _REGISTERED else _short_name(f"{owner}__{short}")
         entry_meta = _entry_frontmatter(match / "index.md")
         if entry_meta is None:
             print(f"  ! skipping generated command {name}: malformed "
@@ -269,11 +275,27 @@ def _expand_template(mcp, root: Path, path: Path) -> int:
         except Exception as e:
             print(f"  ! could not register prompt {name}: {e}", file=sys.stderr)
             continue
-        _REGISTERED.add(name)
+        _REGISTERED[name] = str(path)
         names.add(name)
         count += 1
     GENERATED[str(path)] = {"owner_dir": str(owner_dir), "names": names}
     return count
+
+
+def _evict_generated(mcp, name: str) -> bool:
+    """Remove a template-generated prompt so a command file can take its
+    name (files win at runtime installs too, matching startup order).
+    Returns True when a generated prompt held the name and was evicted."""
+    info = GENERATED.get(_REGISTERED.get(name, ""))
+    if info is None or name not in info["names"]:
+        return False
+    try:
+        mcp._local_provider.remove_prompt(name)
+    except Exception:
+        pass
+    _REGISTERED.pop(name, None)
+    info["names"].discard(name)
+    return True
 
 
 def refresh_generated(mcp, root: Path, written_path: str) -> None:
@@ -295,7 +317,7 @@ def refresh_generated(mcp, root: Path, written_path: str) -> None:
                 mcp._local_provider.remove_prompt(name)
             except Exception:
                 pass
-            _REGISTERED.discard(name)
+            _REGISTERED.pop(name, None)
         _expand_template(mcp, root, Path(template))
 
 
@@ -359,12 +381,10 @@ def register_framework_prompts(mcp, root: Path | None = None) -> int:
     return count
 
 
-def _register_one(mcp, root: Path, path: Path) -> bool:
+def _register_one(mcp, root: Path, path: Path, name: str) -> bool:
     """Register a single command file as a prompt. Returns True on success."""
     from fastmcp.prompts.prompt import Prompt
 
-    owner = path.parent.parent.name
-    name = f"{owner}__{path.stem}"
     try:
         text = path.read_text(encoding="utf-8")
         if path.suffix == ".md":
@@ -383,22 +403,45 @@ def _register_one(mcp, root: Path, path: Path) -> bool:
     except Exception as e:
         print(f"  ! could not register prompt {name}: {e}", file=sys.stderr)
         return False
-    _REGISTERED.add(name)
+    _REGISTERED[name] = str(path)
     return True
 
 
 def register_commands(mcp, root: Path) -> int:
     """Scan connection and module `commands/` folders and register each file
-    as a prompt named `<owner>__<command>`. Command files register first,
-    templates (`each:`) expand after, so a file always wins a name clash."""
+    as a prompt.
+
+    Canonical naming rule, shared by file commands and template-generated
+    commands (see _expand_template): the bare stem with hyphens as
+    underscores when that short name is unique; `<owner>__<stem>` (hyphens
+    normalized the same way) when two owners collide (all colliders get the
+    prefix) or when the stem matches a framework prompt name. Short names
+    matter because the client's slash-command picker scores the query against
+    the full canonical name (mcp__<server>__<name>), so an owner prefix
+    pushes real names over the score cliff, and hyphenated names drop out at
+    hyphen word boundaries (both quirks probed against the real client,
+    2026-08-14). Command files register first, templates (`each:`) expand
+    after, so a file always wins a name clash."""
     GENERATED.clear()
     _REGISTERED.clear()
-    count = 0
+    _REGISTERED.update({n: "framework" for n in _reserved_names()})
+    files: list[Path] = []
     templates: list[Path] = []
     for path in discover(root):
-        if _is_template(path):
-            templates.append(path)
-        elif _register_one(mcp, root, path):
+        (templates if _is_template(path) else files).append(path)
+    shorts = [_short_name(p.stem) for p in files]
+    dupes = {s for s in shorts if shorts.count(s) > 1}
+    count = 0
+    for path, short in zip(files, shorts):
+        if short in dupes or short in _REGISTERED:
+            name = _short_name(f"{path.parent.parent.name}__{path.stem}")
+        else:
+            name = short
+        if name in _REGISTERED:
+            print(f"  ! skipping command {path}: name {name} already "
+                  "taken by another command file", file=sys.stderr)
+            continue
+        if _register_one(mcp, root, path, name):
             count += 1
     for path in templates:
         count += _expand_template(mcp, root, path)
@@ -406,10 +449,18 @@ def register_commands(mcp, root: Path) -> int:
 
 
 def register_module_commands(mcp, root: Path, module_name: str) -> int:
-    """Register commands for a single module (e.g. after install or update)."""
+    """Register commands for a single module (e.g. after install or update).
+
+    Naming per command file, three branches: a name this file already holds
+    is kept (re-registering replaces the prompt in place); otherwise the
+    short name when it is free or held only by a template-generated prompt
+    (the generated prompt is evicted, files win at runtime too); otherwise
+    the owner-prefixed fallback."""
     commands_dir = root / "modules" / module_name / "commands"
     if not commands_dir.is_dir():
         return 0
+    # Defense in depth: register_commands already seeds these into _REGISTERED.
+    reserved = _reserved_names()
     count = 0
     templates: list[Path] = []
     for path in sorted(commands_dir.glob("*")):
@@ -417,7 +468,22 @@ def register_module_commands(mcp, root: Path, module_name: str) -> int:
             continue
         if _is_template(path):
             templates.append(path)
-        elif _register_one(mcp, root, path):
+            continue
+        short = _short_name(path.stem)
+        prefixed = _short_name(f"{module_name}__{path.stem}")
+        src = str(path)
+        if _REGISTERED.get(prefixed) == src:
+            # previously registered prefixed (collision): keep the name stable
+            name = prefixed
+        elif _REGISTERED.get(short) == src or (
+            short not in _REGISTERED and short not in reserved
+        ):
+            name = short
+        elif _evict_generated(mcp, short):
+            name = short
+        else:
+            name = prefixed
+        if _register_one(mcp, root, path, name):
             count += 1
     for path in templates:
         count += _expand_template(mcp, root, path)

@@ -49,5 +49,6 @@ When the user picks an agent that is installed and has updates:
 ## Already up to date
 
 When the user picks an agent that is installed and current, say so and
-offer to run it instead: "It is up to date. Run /mcp__<agent>__<agent-id>__run
-to start a new run."
+offer to run it instead: "It is up to date. Run /mcp__<agent>__run to start a
+new run." (The command is named <agent-id>__run instead when another agent
+also ships a run command; check the prompt list if unsure.)

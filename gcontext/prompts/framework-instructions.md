@@ -27,7 +27,9 @@ How the folder is organized:
   there once it has proven itself.
 - commands/ folders (inside connections and modules): user-invokable entry
   points, exposed as MCP prompts (slash commands in Claude Code, named
-  /mcp__<server>__<owner>__<command>). Two file types:
+  /mcp__<server>__<command>: the file stem with hyphens as underscores when
+  unique, <owner>__<command> when two owners collide or the stem matches a
+  framework prompt name). Two file types:
   - <name>.md: a prompt command. Starts with a `---` YAML frontmatter block
     holding `description` and optional `parameters` (list of `name`,
     `description`, `required`); the body is injected into the conversation
