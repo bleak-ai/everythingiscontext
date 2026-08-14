@@ -20,7 +20,13 @@ flow:
 tags: [test]
 ---
 
-Objective paragraph.
+# Test Flow
+
+A test agent that drives a browser and reports back. Used by the share tests.
+
+- `steps/`: the flow's step files
+- `runs/`: run folders; `example/` shows the expected shape
+- `commands/`: the setup command
 """
 
 SETUP_MD = """---
@@ -72,11 +78,13 @@ def template(tmp_path):
     (t / "index.md").write_text(INDEX_MD)
     steps = t / "steps"
     steps.mkdir()
-    (steps / "index.md").write_text("1-do.md: do things\n")
+    (steps / "index.md").write_text(
+        "# Steps\n\nThe steps of the test flow.\n\n- `1-do.md`: do things\n"
+    )
     (steps / "1-do.md").write_text("# Step 1\n")
     example = t / "runs" / "example"
     example.mkdir(parents=True)
-    (example / "index.md").write_text("# Example\n")
+    (example / "index.md").write_text("# Example\n\nA placeholder example run.\n")
     commands = t / "commands"
     commands.mkdir()
     (commands / "setup.md").write_text(SETUP_MD)
@@ -92,7 +100,8 @@ def _index_md(**overrides):
             meta.pop(key, None)
         else:
             meta[key] = value
-    return f"---\n{yaml.safe_dump(meta)}---\n\nObjective paragraph.\n"
+    body = INDEX_MD.split("---")[2].lstrip("\n")
+    return f"---\n{yaml.safe_dump(meta)}---\n\n{body}"
 
 
 def test_share_validates_and_prints_pr_instructions(template, request_log):
@@ -352,6 +361,15 @@ def test_share_skips_pycache(template):
 
 def test_share_skips_binary_with_warning(template):
     (template / "image.bin").write_bytes(b"\x80\x81\x82\xff\xfe")
+    (template / "index.md").write_text(INDEX_MD + "- `image.bin`: a binary asset\n")
     result = run_cli("share", str(template), cwd=template.parent)
     assert result.returncode == 0, result.stderr
     assert "Skipping image.bin" in result.stderr
+
+
+def test_share_rejects_malformed_child_index(template):
+    (template / "steps" / "index.md").write_text("1-do.md: do things\n")
+    result = run_cli("share", str(template), cwd=template.parent)
+    assert result.returncode == 1
+    assert "steps/index.md" in result.stderr
+    assert "title" in result.stderr

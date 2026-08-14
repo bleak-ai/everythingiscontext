@@ -214,14 +214,21 @@ def _template(tmp_path, agent_id="test-flow", agents=None, extra_meta=None):
         meta.update(extra_meta)
     t = tmp_path / agent_id
     t.mkdir()
-    (t / "index.md").write_text(f"---\n{yaml.safe_dump(meta)}---\n\nObjective paragraph.\n")
+    body = (
+        "# Test Flow\n\nA test agent that drives a browser.\n\n"
+        "- `steps/`: the flow's step files\n"
+        "- `runs/`: run folders; `example/` shows the expected shape\n"
+    )
+    (t / "index.md").write_text(f"---\n{yaml.safe_dump(meta)}---\n\n{body}")
     steps = t / "steps"
     steps.mkdir()
-    (steps / "index.md").write_text("1-do.md: do things\n")
+    (steps / "index.md").write_text(
+        "# Steps\n\nThe steps of the test flow.\n\n- `1-do.md`: do things\n"
+    )
     (steps / "1-do.md").write_text("# Step 1\n")
     example = t / "runs" / "example"
     example.mkdir(parents=True)
-    (example / "index.md").write_text("# Example\n")
+    (example / "index.md").write_text("# Example\n\nA placeholder example run.\n")
     return t
 
 

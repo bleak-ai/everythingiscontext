@@ -50,11 +50,25 @@ Every surface ends with one line that starts with `Next:` and names exactly one 
 Next: run /mcp__my-agent__setup to finish the interview.
 ```
 
+Exception: the `gcontext add` post-install output closes with a `Next steps:` numbered block instead (see the restart rule below). It addresses a human at a terminal, and the restart plus setup sequence is more than one action.
+
 ## The restart rule
 
-One wording, reused everywhere a restart is needed:
+One wording, reused everywhere a restart is needed in agent-facing text:
 
 "Restart the server (stop, `gcontext up`), then reconnect in your client (`/mcp` in Claude Code)."
+
+The `gcontext add` CLI output uses the numbered form instead:
+
+```
+Next steps:
+  1. Stop the server (Ctrl-C).
+  2. Start it again: gcontext up <dir>
+  3. Reconnect in your client: type /mcp in Claude Code.
+  4. Run the setup: /mcp__<server>__<module>__setup
+```
+
+Step 4 appears only when the installed agent ships `commands/setup.md`. The printed command is the owner-prefixed name ("setup" is a reserved framework stem), copy-pasteable, no backticks.
 
 ## Tone rules
 

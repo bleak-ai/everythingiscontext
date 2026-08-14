@@ -457,10 +457,15 @@ def cmd_add(args):
             f"{BOLD}gcontext{RESET} {DIM}-{RESET} installed {dep['name']} "
             f"({dep['count']} files) at {dep['path']}/ (required by {dep['required_by']})"
         )
+    up_dir = args.project or "."
     print()
-    print(RESTART_RULE)
-    print()
-    print(f"Next: run /mcp__{server_name}__setup in your client.")
+    print("Next steps:")
+    print("  1. Stop the server (Ctrl-C).")
+    print(f"  2. Start it again: gcontext up {up_dir}")
+    print("  3. Reconnect in your client: type /mcp in Claude Code.")
+    if (project_dir / rel / "commands" / "setup.md").exists():
+        setup_cmd = commands_mod.installed_setup_prompt(server_name, result["id"])
+        print(f"  4. Run the setup: {setup_cmd}")
 
 
 def validate_template(folder: Path) -> dict:
@@ -591,6 +596,23 @@ def validate_template(folder: Path) -> dict:
                     file=sys.stderr,
                 )
                 sys.exit(1)
+
+    from .fs import _index_siblings, index_format_issues, INDEX_SHAPE
+
+    for child_index in sorted(folder.rglob("index.md")):
+        rel_parts = child_index.relative_to(folder).parts
+        if any(p.startswith(".") or p.startswith("__") for p in rel_parts):
+            continue
+        issues = index_format_issues(
+            child_index.read_text(encoding="utf-8"),
+            _index_siblings(child_index.parent),
+        )
+        if issues:
+            rel = "/".join(rel_parts)
+            for issue in issues:
+                print(f"Error: {rel}: {issue}.", file=sys.stderr)
+            print(f"Error: {INDEX_SHAPE}", file=sys.stderr)
+            sys.exit(1)
 
     return meta
 

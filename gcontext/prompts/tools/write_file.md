@@ -7,9 +7,11 @@ Updating an existing file returns a unified diff of the change (capped at
 200 lines), so every write is auditable in the transcript. Creating a file
 returns its size and line count.
 
-The result can carry a warning: an index.md that does not reference every
-sibling, or a new file the folder's index.md does not mention. The write
-still happens; update the index right away so the map stays complete.
+The result can carry a warning: an index.md that breaks the index format
+(a `# ` title, a 2-3 sentence summary paragraph, then one `- `file`:
+description` bullet per sibling, nothing else), or a new file the folder's
+index.md does not mention. The write still happens; fix the index right
+away so the map stays complete.
 
 Args:
     path: Relative path within the project (e.g. 'modules/support-agent/playbooks/refund.md')

@@ -63,7 +63,8 @@ def test_index_write_warns_about_unreferenced_siblings(project):
     assert "playbooks" in out
     out = server.write_file(
         "modules/notes/index.md",
-        "Summary.\n- [decisions.md](decisions.md): log\n- playbooks/: procedures\n",
+        "# Notes\n\nNotes module summary.\n\n"
+        "- [decisions.md](decisions.md): log\n- playbooks/: procedures\n",
     )
     assert "Warning" not in out
 
@@ -73,7 +74,7 @@ def test_index_check_ignores_machine_and_exempt_entries(project):
     (notes / "archive").mkdir(parents=True)
     (notes / "__pycache__").mkdir()
     (notes / "secrets.env").write_text("X=1")
-    out = server.write_file("modules/notes/index.md", "nothing linked")
+    out = server.write_file("modules/notes/index.md", "# Notes\n\nNothing linked here.\n")
     assert "Warning" not in out
 
 

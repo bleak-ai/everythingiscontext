@@ -156,6 +156,16 @@ def _reserved_names() -> set[str]:
     return {p.stem for p in discover_framework_prompts()}
 
 
+def installed_setup_prompt(server_name: str, module_id: str) -> str:
+    """Client invocation for a module's setup command.
+
+    "setup" is a reserved framework stem, so a module's commands/setup.md
+    always registers owner-prefixed; only the command part is underscored,
+    the server name keeps its hyphens.
+    """
+    return f"/mcp__{server_name}__{_short_name(f'{module_id}__setup')}"
+
+
 def _is_template(path: Path) -> bool:
     if path.suffix != ".md":
         return False

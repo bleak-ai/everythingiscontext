@@ -89,10 +89,103 @@ def _index_siblings(folder: Path) -> list[str]:
     """
     names = []
     for entry in sorted(folder.iterdir(), key=lambda e: e.name):
-        if entry.name in SKIP_DIRS | SKIP_FILES | {"index.md", "secrets.env", "archive"}:
+        if entry.name.startswith(".") or entry.name in SKIP_DIRS | SKIP_FILES | {"index.md", "secrets.env", "archive"}:
             continue
         names.append(entry.name)
     return names
+
+
+INDEX_SHAPE = (
+    "An index.md is a '# ' title, a 2-3 sentence summary paragraph, then one "
+    "'- `file`: description' bullet per sibling, nothing else."
+)
+
+_HEADING_RE = re.compile(r"^#{1,6}(\s|$)")
+_MAX_SUMMARY_LINES = 5
+
+
+def _strip_frontmatter(lines: list[str]) -> list[str]:
+    """Drop a leading `---` YAML block (agent root manifests carry one)."""
+    if lines and lines[0].strip() == "---":
+        for i, ln in enumerate(lines[1:], 1):
+            if ln.strip() == "---":
+                return lines[i + 1 :]
+    return lines
+
+
+def _mentions(text: str, name: str) -> bool:
+    """True when text references name as a whole token.
+
+    Accepts backticks, markdown links, plain mentions, a trailing slash, and
+    paths under a directory (`steps/1-do.md` mentions `steps`). Rejects
+    substrings of longer names (`changelog.md` does not mention `log.md`).
+    """
+    return re.search(r"(?<![\w.-])" + re.escape(name) + r"(/|(?![\w-]))", text) is not None
+
+
+def index_format_issues(content: str, siblings: list[str]) -> list[str]:
+    """Ways this index.md content breaks the map convention; empty list = valid.
+
+    Shape: a `# ` title, one plain-text summary paragraph (max
+    _MAX_SUMMARY_LINES lines), then one bullet per sibling, nothing else.
+    Frontmatter is stripped first; indented lines after a bullet count as
+    that bullet's continuation.
+    """
+    issues: list[str] = []
+    lines = _strip_frontmatter(content.splitlines())
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    if not lines:
+        return ["the file is empty"]
+
+    if lines[0].startswith("# "):
+        body = lines[1:]
+    else:
+        issues.append("the first line must be a '# ' title")
+        body = lines
+
+    summary_lines: list[str] = []
+    in_summary_gap = False
+    bullets: list[str] = []
+    seen_bullet = False
+    for ln in body:
+        stripped = ln.strip()
+        if not stripped:
+            if summary_lines and not seen_bullet:
+                in_summary_gap = True
+            continue
+        if _HEADING_RE.match(ln):
+            issues.append(f"extra heading is not allowed: {stripped[:60]!r}")
+            continue
+        if ln.startswith("- "):
+            seen_bullet = True
+            bullets.append(stripped)
+            continue
+        if seen_bullet:
+            if ln[:1] in (" ", "\t") and bullets:
+                bullets[-1] += " " + stripped
+            else:
+                issues.append(f"content after the bullet list is not allowed: {stripped[:60]!r}")
+            continue
+        if in_summary_gap:
+            issues.append("the summary must be a single paragraph")
+            in_summary_gap = False
+        summary_lines.append(stripped)
+
+    if not summary_lines:
+        issues.append("a summary paragraph after the title is missing")
+    elif len(summary_lines) > _MAX_SUMMARY_LINES:
+        issues.append(f"the summary paragraph is longer than {_MAX_SUMMARY_LINES} lines")
+
+    joined = "\n".join(bullets)
+    if siblings:
+        for b in bullets:
+            if not any(_mentions(b, n) for n in siblings):
+                issues.append(f"bullet references no file in this folder: {b[:60]!r}")
+    for n in siblings:
+        if not _mentions(joined, n):
+            issues.append(f"no bullet references {n}")
+    return issues
 
 
 def _index_warning(root: Path, target: Path, content: str, existed: bool) -> str:
@@ -103,17 +196,19 @@ def _index_warning(root: Path, target: Path, content: str, existed: bool) -> str
     Advisory only, the write itself always goes through.
     """
     if target.name == "index.md":
-        missing = [n for n in _index_siblings(target.parent) if n not in content]
-        if missing:
+        issues = index_format_issues(content, _index_siblings(target.parent))
+        if issues:
             return (
-                f" Warning: this index.md does not reference: {', '.join(missing)}. "
-                "An index.md must link every sibling with one line."
+                " Warning: this index.md breaks the index format: "
+                + "; ".join(issues)
+                + ". "
+                + INDEX_SHAPE
             )
         return ""
     if existed or target.name == "agent.md":
         return ""
     index = target.parent / "index.md"
-    if index.is_file() and target.name not in index.read_text():
+    if index.is_file() and not _mentions(index.read_text(), target.name):
         rel = "/".join(index.relative_to(root.resolve()).parts)
         return (
             f" Warning: {rel} does not mention {target.name}. "

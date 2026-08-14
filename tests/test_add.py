@@ -112,11 +112,29 @@ def test_add_installs_bundle_into_modules(registry, agent):
         else:
             assert installed == f["content"]
     assert "installed Demo Flow (5 files) at modules/demo-flow/" in result.stdout
-    assert (
-        "Restart the server (stop, `gcontext up`), then reconnect in your client"
-        " (`/mcp` in Claude Code)." in result.stdout
+    assert "Next steps:" in result.stdout
+    assert "1. Stop the server (Ctrl-C)." in result.stdout
+    assert "2. Start it again: gcontext up ." in result.stdout
+    assert "3. Reconnect in your client: type /mcp in Claude Code." in result.stdout
+    assert "4. Run the setup: /mcp__a__demo_flow__setup" in result.stdout
+
+
+def test_add_without_setup_command_omits_step_four(registry, agent):
+    files = [f for f in BUNDLE_FILES if f["path"] != "commands/setup.md"]
+    registry[0] = _build_tarball(
+        [{"path": f"demo-flow/{f['path']}", "content": f["content"]} for f in files]
     )
-    assert "Next: run /mcp__a__setup in your client." in result.stdout
+    result = run_cli("add", "demo-flow", cwd=agent)
+    assert result.returncode == 0, result.stderr
+    assert "3. Reconnect in your client" in result.stdout
+    assert "4. Run the setup:" not in result.stdout
+
+
+def test_add_with_project_argument_names_directory(registry, agent):
+    registry[0] = _build_tarball(_registry_files())
+    result = run_cli("add", "demo-flow", str(agent), cwd=agent.parent)
+    assert result.returncode == 0, result.stderr
+    assert f"2. Start it again: gcontext up {agent}" in result.stdout
 
 
 def test_add_existing_module_warns_and_stops(registry, agent):
