@@ -17,6 +17,7 @@ from pathlib import Path
 import yaml
 
 from . import report_strings as S
+from . import state
 from .commands import parse_command
 
 SETUP_FIELD = "setup"
@@ -28,24 +29,7 @@ _WRAP_WIDTH = 62
 
 def _available_kinds(project_dir: Path) -> set[str]:
     """Kinds carried by the connection.yaml files under connections/."""
-    kinds = set()
-    conns_dir = project_dir / "connections"
-    if not conns_dir.is_dir():
-        return kinds
-    for item in sorted(conns_dir.iterdir()):
-        if not item.is_dir():
-            continue
-        conn_file = item / "connection.yaml"
-        if not conn_file.exists():
-            continue
-        try:
-            data = yaml.safe_load(conn_file.read_text(encoding="utf-8"))
-        except (yaml.YAMLError, OSError):
-            continue
-        kind = data.get("kind") if isinstance(data, dict) else None
-        if isinstance(kind, str) and kind:
-            kinds.add(kind)
-    return kinds
+    return {c.kind for c in state.load_connections(project_dir).values() if c.kind}
 
 
 def _agents(project_dir: Path) -> list[tuple[str, dict, list, Path]]:
