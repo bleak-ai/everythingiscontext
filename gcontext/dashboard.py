@@ -92,8 +92,8 @@ async def api_modules(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
-def _command_entry(path: Path, owner: str, rel: str, kind: str) -> dict:
-    entry = {"owner": owner, "name": f"{owner}__{path.stem}", "kind": kind, "path": rel}
+def _command_entry(path: Path, name: str, owner: str, rel: str, kind: str) -> dict:
+    entry = {"owner": owner, "name": name, "kind": kind, "path": rel}
     try:
         text = path.read_text(encoding="utf-8")
         if path.suffix == ".md":
@@ -118,14 +118,32 @@ def _command_entry(path: Path, owner: str, rel: str, kind: str) -> dict:
 async def api_commands(request: Request) -> JSONResponse:
     root = _root()
     result = []
+    # Build reverse map: file path string -> registered prompt name.
+    path_to_name: dict[str, str] = {}
+    for reg_name, source in commands_mod._REGISTERED.items():
+        if source == "framework":
+            continue
+        path_to_name.setdefault(source, reg_name)
+    # File commands: look up the registered name, fall back to short_name.
     for path in commands_mod.discover(root):
+        if commands_mod._is_template(path):
+            continue
         rel = str(path.relative_to(root))
         owner = path.parent.parent.name
-        result.append(_command_entry(path, owner, rel, path.suffix.lstrip(".")))
+        name = path_to_name.get(str(path), commands_mod._short_name(path.stem))
+        result.append(_command_entry(path, name, owner, rel, path.suffix.lstrip(".")))
+    # Template-generated entries from GENERATED.
+    for tpl_path_str, info in commands_mod.GENERATED.items():
+        tpl_path = Path(tpl_path_str)
+        owner = Path(info["owner_dir"]).name
+        for gen_name in sorted(info["names"]):
+            rel = str(tpl_path.relative_to(root)) if tpl_path.is_relative_to(root) else tpl_path_str
+            result.append(_command_entry(tpl_path, gen_name, owner, rel, "md"))
+    # Framework prompts.
     for path in commands_mod.discover_framework_prompts():
-        entry = _command_entry(path, "framework", f"gcontext/prompts/{path.name}", "md")
-        entry["name"] = path.stem
-        result.append(entry)
+        result.append(_command_entry(
+            path, path.stem, "framework", f"gcontext/prompts/{path.name}", "md"
+        ))
     return JSONResponse(result)
 
 
