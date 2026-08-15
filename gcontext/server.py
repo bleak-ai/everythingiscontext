@@ -1,6 +1,6 @@
 """The MCP surface: everything an attached agent can reach, in one file.
 
-Six tools (defined below, their agent-facing text in prompts/tools/*.md),
+Seven tools (defined below, their agent-facing text in prompts/tools/*.md),
 state files as MCP resources (gcontext://<path>, listed live), commands
 registered as prompts, a /status route, and session tracking.
 The actual work lives in the per-concern modules:

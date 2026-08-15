@@ -3,7 +3,7 @@ exposed as MCP prompts.
 
 Two file types (design ported from the maat-agent S13 spike). Both surface as
 slash commands in Claude Code (`/mcp__<server>__<command>`); neither adds a
-tool, so the tool list stays at the six generic tools and the command text
+tool, so the tool list stays at the seven generic tools and the command text
 enters context only when the user invokes it. A command's name is its bare
 file stem with hyphens as underscores when that short name is unique; it
 becomes `<owner>__<command>` (hyphens normalized the same way) when two

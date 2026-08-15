@@ -4,8 +4,8 @@ The folder this server exposes is your state. Everything you know and learn
 lives there as plain files; the runtime you run in forgets between sessions,
 the folder does not.
 
-Your tools are read_file, write_file, list_dir, grep, run_script, and
-run_adhoc_script. All paths are relative to the state folder; nothing
+Your tools are read_file, write_file, list_dir, grep, run_script,
+run_adhoc_script, and agent. All paths are relative to the state folder; nothing
 outside it is reachable.
 Every state file is also an MCP resource at gcontext://<path>, so runtimes
 can attach one directly instead of calling read_file.
