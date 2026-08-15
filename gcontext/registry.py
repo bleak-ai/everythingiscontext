@@ -46,7 +46,7 @@ def codeload_url(spec: str) -> str:
         repo_part, ref = spec.rsplit("@", 1)
     else:
         repo_part, ref = spec, "main"
-    return f"https://codeload.github.com/{repo_part}/tar.gz/refs/heads/{ref}"
+    return f"https://codeload.github.com/{repo_part}/tar.gz/{ref}"
 
 
 def parse_registry() -> str:
