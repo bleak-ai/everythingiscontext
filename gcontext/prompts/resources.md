@@ -1,1 +1,0 @@
-A state file, addressed directly. `gcontext://<path>` returns the file's content (a folder URI returns its listing), same confinement as read_file: paths stay inside the project, secrets.env is unreachable. Runtimes that support MCP resources can attach one without a tool call, e.g. `@<server-name>:gcontext://modules/<topic>/index.md`.

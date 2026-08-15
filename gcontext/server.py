@@ -213,8 +213,8 @@ class ConnectionTracker(Middleware):
 
     async def on_list_resources(self, context, call_next):
         """Curated resource list: the agent entry point plus each module and
-        connection.  Every file stays readable via the gcontext://{path*}
-        template; only the entry points appear as suggestions."""
+        connection.  Only the entry points appear as suggestions; every file
+        stays readable via the read_file tool."""
         await call_next(context)
         result = []
         config = state.load_gcontext_yaml(PROJECT_DIR)

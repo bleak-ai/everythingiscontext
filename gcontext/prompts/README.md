@@ -11,9 +11,6 @@ as markdown, not in Python strings.
 - `tools/*.md`: one file per tool. These are the tool descriptions pushed to
   every client at connect time (ledger pipe G2). Edit a file, restart the
   server, and every session sees the new text.
-- `resources.md`: the description of the `gcontext://<path>` resource
-  template, which exposes every state file as an MCP resource (ledger pipe
-  G7).
 - `setup.md`: the built-in `setup` prompt, registered as an MCP prompt in
   every instance (part of ledger pipe G6, `/mcp__<server>__setup` in Claude
   Code). Same frontmatter format as project commands, but framework-owned
