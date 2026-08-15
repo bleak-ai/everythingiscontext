@@ -145,8 +145,6 @@ def cmd_init(args):
     print(f"  3. {f'run /mcp__{name}__setup':<{pad}}  in the client: describe what the agent should do, it builds the rest")
     print()
     print(f"{DIM}See what reaches the agent, anytime: gcontext context {args.directory}{RESET}")
-    print()
-    print(f"Next: run gcontext up {args.directory} to start the server.")
 
 
 def find_project_dir(path: str | None) -> Path:
@@ -162,7 +160,12 @@ def resolve_port(args, project_dir: Path) -> int:
     if getattr(args, "port", None):
         return args.port
     config = state.load_gcontext_yaml(project_dir)
-    return int(config.get("port", DEFAULT_PORT))
+    raw = config.get("port", DEFAULT_PORT)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        print(f"Error: port value '{raw}' in gcontext.yaml is not a valid number.", file=sys.stderr)
+        sys.exit(1)
 
 
 def server_url(port: int) -> str:
@@ -444,7 +447,7 @@ def cmd_add(args):
     except (registry_mod.RegistryError, ValueError) as e:
         msg = str(e)
         print(f"Error: {msg}", file=sys.stderr)
-        if "no agent" in msg:
+        if msg.startswith("no agent '") or msg.startswith("no agent \""):
             print("Browse available agents:", file=sys.stderr)
             print("  https://github.com/bleak-ai/agents", file=sys.stderr)
             print("  https://gcontext.ai/agents/", file=sys.stderr)
@@ -715,7 +718,7 @@ def cmd_search(args):
         if e.get("description"):
             print(f"    {DIM}{e['description']}{RESET}")
     print()
-    print(f"Install: gcontext add <id>")
+    print("Install: gcontext add <id>")
 
 
 def main():
