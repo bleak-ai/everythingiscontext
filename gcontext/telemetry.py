@@ -1,7 +1,10 @@
 import json
 import os
 import platform
+import ssl
 import urllib.request
+
+import certifi
 
 DEFAULT_API = "https://api.gcontext.ai"
 
@@ -29,7 +32,8 @@ def ping_install(install_id: str, version: str) -> None:
             },
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=3):
+        ctx = ssl.create_default_context(cafile=certifi.where())
+        with urllib.request.urlopen(req, timeout=3, context=ctx):
             pass
     except Exception:
         pass

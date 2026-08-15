@@ -10,12 +10,14 @@ import hashlib
 import io
 import json
 import os
+import ssl
 import tarfile
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path, PurePosixPath
 
+import certifi
 import yaml
 
 
@@ -54,9 +56,14 @@ def parse_registry() -> str:
     return codeload_url(spec)
 
 
+def _ssl_context() -> ssl.SSLContext:
+    ctx = ssl.create_default_context(cafile=certifi.where())
+    return ctx
+
+
 def download_tarball(url: str) -> tarfile.TarFile:
     try:
-        with urllib.request.urlopen(url, timeout=30) as resp:
+        with urllib.request.urlopen(url, timeout=30, context=_ssl_context()) as resp:
             data = resp.read()
     except (urllib.error.HTTPError, urllib.error.URLError, OSError):
         raise RegistryError(f"could not reach the registry at {url}")
@@ -229,7 +236,7 @@ def _ping_download(agent_id: str) -> None:
             f"{urllib.parse.quote(agent_id, safe='')}",
             headers={"X-Source": "cli", "User-Agent": "gcontext-cli"},
         )
-        with urllib.request.urlopen(req, timeout=3):
+        with urllib.request.urlopen(req, timeout=3, context=_ssl_context()):
             pass
     except Exception:
         pass

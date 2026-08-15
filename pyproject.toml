@@ -1,6 +1,6 @@
 [project]
 name = "gcontext-ai"
-version = "0.10.1"
+version = "0.10.2"
 description = "The framework for building stateful agents. Your agent is a folder of state, served over MCP, used from any runtime."
 readme = "README.md"
 license = { text = "MIT" }
@@ -10,6 +10,7 @@ keywords = ["mcp", "agents", "ai", "state", "context"]
 dependencies = [
     "fastmcp>=2.0.0",
     "pyyaml>=6.0",
+    "certifi",
 ]
 
 [project.urls]
