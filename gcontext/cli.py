@@ -603,9 +603,15 @@ def validate_template(folder: Path) -> dict:
         rel_parts = child_index.relative_to(folder).parts
         if any(p.startswith(".") or p.startswith("__") for p in rel_parts):
             continue
+        siblings = _index_siblings(child_index.parent)
+        if child_index.parent == folder:
+            # README.md at the agent root documents the agent on GitHub;
+            # the registry build excludes it from installs, so the map
+            # must not list it.
+            siblings = [n for n in siblings if n != "README.md"]
         issues = index_format_issues(
             child_index.read_text(encoding="utf-8"),
-            _index_siblings(child_index.parent),
+            siblings,
         )
         if issues:
             rel = "/".join(rel_parts)

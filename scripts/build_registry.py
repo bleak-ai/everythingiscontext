@@ -37,6 +37,10 @@ def build(checkout: Path) -> dict:
             rel_parts = f.relative_to(d).parts
             if any(p.startswith(".") or p.startswith("__") for p in rel_parts):
                 continue
+            # README.md at the agent root documents the agent on GitHub;
+            # it is not part of the installed state.
+            if rel_parts == ("README.md",):
+                continue
             try:
                 f.read_text(encoding="utf-8")
             except (UnicodeDecodeError, OSError):
