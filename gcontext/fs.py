@@ -14,7 +14,7 @@ from pathlib import Path
 # Machine folders: never served to the dashboard browser, skipped by
 # list_dir and grep.
 SKIP_DIRS = {".venv", ".git", "__pycache__", "node_modules"}
-SKIP_FILES = {".template.yaml"}
+SKIP_FILES = {".template.yaml", ".venv-sync.lock"}
 BROWSER_BLOCKED = SKIP_DIRS
 
 GREP_MAX_MATCHES = 100
