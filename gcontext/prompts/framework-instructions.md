@@ -14,7 +14,12 @@ How the folder is organized:
 
 - connections/<service>/: a service you can use. Its connection.yaml declares
   the secret NAMEs and Python deps it needs; its index.md explains the API in
-  practice. Read the index.md before writing a script against a service, and
+  practice. connection.yaml fields: `name` (folder identity), `description`,
+  `kind` (one of: ticket-tracker, product-api, keyword-source, browser,
+  source-control, package-registry, deploy-target, notification-sink),
+  `secrets` (list of secret NAMEs, values live in secrets.env), and `deps`
+  (list of pip package names installed into the project venv).
+  Read the index.md before writing a script against a service, and
   update it when you learn something worth keeping.
 - modules/<name>/: accumulated knowledge on a topic, entry point index.md.
   Modules are portable: another agent can use one by copying the folder. So
@@ -49,6 +54,10 @@ How the folder is organized:
   Entries re-register after every write, but the runtime's command
   list refreshes only on reconnect: after creating an entry, tell the user
   to reconnect the client (/mcp in Claude Code) to see its command.
+  If your client does not surface MCP prompts, commands still work: read
+  the command file under `modules/<id>/commands/` (or
+  `connections/<id>/commands/`) with read_file and follow its body as the
+  instruction, filling the declared parameters from the user's request.
   When the user asks for a reusable command or agent entry point, this
   is where it goes: write the file with write_file under the connection or
   module it belongs to. New command files appear after a server restart,
@@ -70,7 +79,8 @@ split a file when it stops being readable in one pass, not before.
 run_script runs a saved script by path; run_adhoc_script runs ad-hoc
 source. Both execute Python with the declared deps preinstalled and secret
 values injected as environment variables: you see secret names, never
-values, and values are scrubbed from all output. Explore with
+values, and values are scrubbed from all output. Both accept an optional
+`timeout` in seconds (default 60, max 600). Explore with
 run_adhoc_script; keep what works as a script and call it with run_script.
 
 Every write needs the user's approval. Before any write_file call, show

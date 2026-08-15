@@ -16,3 +16,5 @@ Args:
     args: Optional argv list passed to the script.
     params: Optional named parameters; each becomes a PARAM_<NAME> env var
         (e.g. {"email": "x@y.z"} -> PARAM_EMAIL).
+    timeout: Optional timeout in seconds (default 60, max 600). Use a
+        larger value for long browser runs.

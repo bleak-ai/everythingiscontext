@@ -181,6 +181,31 @@ def validate_bundle(files) -> dict:
         not isinstance(agents, list) or not all(isinstance(a, str) and a for a in agents)
     ):
         raise ValueError("'agents' must be a list of agent ids")
+    connections = meta.get("connections")
+    if connections is not None:
+        from .kinds import CONNECTION_KINDS
+
+        if not isinstance(connections, list):
+            raise ValueError("'connections' must be a list of entries with a 'kind'")
+        valid = ", ".join(CONNECTION_KINDS)
+        for i, entry in enumerate(connections):
+            if not isinstance(entry, dict):
+                raise ValueError(f"connections[{i}]: must be a mapping with a 'kind'")
+            kind = entry.get("kind")
+            if not isinstance(kind, str) or not kind:
+                raise ValueError(f"connections[{i}]: missing 'kind' (valid: {valid})")
+            if kind not in CONNECTION_KINDS:
+                raise ValueError(f"connections[{i}]: unknown kind '{kind}' (valid: {valid})")
+            desc = entry.get("description")
+            if desc is not None and not isinstance(desc, str):
+                raise ValueError(f"connections[{i}]: 'description' must be a string")
+            for field in ("examples", "deps", "secrets"):
+                val = entry.get(field)
+                if val is not None and (
+                    not isinstance(val, list)
+                    or not all(isinstance(x, str) for x in val)
+                ):
+                    raise ValueError(f"connections[{i}]: '{field}' must be a list of strings")
     return meta
 
 
@@ -256,6 +281,58 @@ def _write_module(module_dir: Path, meta: dict, files: list[dict], ref: str):
     write_manifest(module_dir, meta["id"], ref, files)
 
 
+def scaffold_connections(project_dir: Path, meta: dict) -> list[dict]:
+    """Create stub connection folders for the kinds a module declares.
+
+    For each entry in meta["connections"] whose kind has no existing
+    connection, write connections/<kind>/connection.yaml and
+    connections/<kind>/index.md. Returns one report dict per entry:
+    {"kind": ..., "status": "created" | "exists", "path": ...}.
+    """
+    from . import state
+
+    declared = meta.get("connections") or []
+    if not declared:
+        return []
+
+    existing_kinds = {
+        c.kind for c in state.load_connections(project_dir).values() if c.kind
+    }
+    report = []
+    for entry in declared:
+        kind = entry["kind"]
+        conn_dir = project_dir / "connections" / kind
+        if kind in existing_kinds or conn_dir.exists():
+            report.append(
+                {"kind": kind, "status": "exists", "path": f"connections/{kind}"}
+            )
+            continue
+        conn_dir.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "name": kind,
+            "description": entry.get("description") or "",
+            "kind": kind,
+            "secrets": entry.get("secrets") or [],
+            "deps": entry.get("deps") or [],
+        }
+        (conn_dir / "connection.yaml").write_text(
+            yaml.safe_dump(manifest, sort_keys=False)
+        )
+        desc = entry.get("description") or ""
+        desc_line = f"{desc}\n" if desc else ""
+        (conn_dir / "index.md").write_text(
+            f"# {kind}\n\n"
+            f"Stub created on install of {meta['id']}. Setup fills this in.\n"
+            f"{desc_line}\n"
+            "- connection.yaml: declared kind, secret names, and Python deps.\n"
+        )
+        existing_kinds.add(kind)
+        report.append(
+            {"kind": kind, "status": "created", "path": f"connections/{kind}"}
+        )
+    return report
+
+
 def install_agent(project_dir: Path, source: str) -> dict:
     is_registry_install = not ("://" in source or source.startswith("github.com/"))
     if is_registry_install:
@@ -305,6 +382,10 @@ def install_agent(project_dir: Path, source: str) -> dict:
                 "path": f"modules/{m['id']}", "required_by": required_by,
             })
 
+    connections_report = []
+    for m, fl, r, required_by in to_write:
+        connections_report.extend(scaffold_connections(project_dir, m))
+
     if is_registry_install and (
         os.environ.get("GCONTEXT_API") or registry_spec() == DEFAULT_REGISTRY
     ):
@@ -313,6 +394,7 @@ def install_agent(project_dir: Path, source: str) -> dict:
     return {
         "id": meta["id"], "name": meta["name"], "count": len(files),
         "path": f"modules/{meta['id']}", "dependencies": dependencies,
+        "connections": connections_report,
     }
 
 

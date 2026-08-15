@@ -17,6 +17,7 @@ from . import commands as commands_mod
 from . import exec as exec_mod
 from . import ledger as ledger_mod
 from . import registry as registry_mod
+from . import report_strings
 from .kinds import CONNECTION_KINDS
 from . import secrets as secrets_mod
 from . import server
@@ -74,6 +75,7 @@ INIT_SECRETS = """\
 INIT_AGENT_GITIGNORE = """\
 secrets.env
 .venv/
+.venv-sync.lock
 """
 
 INIT_README = """\
@@ -457,6 +459,12 @@ def cmd_add(args):
             f"{BOLD}gcontext{RESET} {DIM}-{RESET} installed {dep['name']} "
             f"({dep['count']} files) at {dep['path']}/ (required by {dep['required_by']})"
         )
+    for conn in result.get("connections", []):
+        if conn["status"] == "created":
+            line = report_strings.CONNECTION_STUB_CREATED_LINE.format(kind=conn["kind"])
+        else:
+            line = report_strings.CONNECTION_EXISTS_LINE.format(kind=conn["kind"])
+        print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {line}")
     up_dir = args.project or "."
     print()
     print("Next steps:")

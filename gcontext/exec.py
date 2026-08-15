@@ -12,6 +12,7 @@ raise ValueError, which the MCP layer surfaces as a tool error.
 
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,7 @@ from . import secrets as secrets_mod
 from . import state
 
 SCRIPT_TIMEOUT = 60
+MAX_TIMEOUT = 600
 MAX_OUTPUT = 100_000  # chars per stream; beyond this the stream is capped
 
 
@@ -43,23 +45,77 @@ def collect_deps(root: Path) -> set[str]:
     return all_deps
 
 
-def ensure_venv(root: Path) -> None:
-    """Create the project venv if missing and sync connection deps into it."""
-    if not venv_dir(root).is_dir():
-        subprocess.run(
-            ["uv", "venv", str(venv_dir(root)), "--quiet"],
-            check=True,
-            cwd=str(root),
-        )
+class VenvSyncBusy(Exception):
+    pass
 
-    all_deps = collect_deps(root)
-    if all_deps:
-        subprocess.run(
-            ["uv", "pip", "install", "--quiet", "--python", str(venv_python(root))]
-            + sorted(all_deps),
-            check=True,
-            cwd=str(root),
-        )
+
+LOCK_STALE_SECONDS = 600
+
+
+def _sync_lock(root: Path) -> Path:
+    return root.resolve() / ".venv-sync.lock"
+
+
+def _acquire_sync_lock(root: Path) -> Path:
+    """Take the exclusive sync lock, or raise VenvSyncBusy.
+
+    A lock older than LOCK_STALE_SECONDS is from a dead sync: remove it and
+    retry the acquire once.
+    """
+    lock = _sync_lock(root)
+    for attempt in (0, 1):
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            return lock
+        except FileExistsError:
+            try:
+                age = time.time() - lock.stat().st_mtime
+            except OSError:
+                continue  # the lock vanished between open and stat; retry
+            if attempt == 0 and age > LOCK_STALE_SECONDS:
+                lock.unlink(missing_ok=True)
+                continue
+            raise VenvSyncBusy("venv sync already in progress")
+    raise VenvSyncBusy("venv sync already in progress")
+
+
+def deps_marker(root: Path) -> Path:
+    return venv_dir(root) / "gcontext-deps.txt"
+
+
+def ensure_venv(root: Path) -> None:
+    """Create the project venv if missing and sync connection deps into it.
+
+    A marker file inside the venv caches the last synced dep set. When the
+    marker matches the declared deps, no uv command runs.
+    """
+    wanted = "\n".join(sorted(collect_deps(root)))
+    marker = deps_marker(root)
+    if venv_dir(root).is_dir() and marker.exists() and marker.read_text() == wanted:
+        return
+
+    lock = _acquire_sync_lock(root)
+    try:
+        if not venv_dir(root).is_dir():
+            subprocess.run(
+                ["uv", "venv", str(venv_dir(root)), "--quiet"],
+                check=True,
+                cwd=str(root),
+            )
+        if wanted:
+            subprocess.run(
+                ["uv", "pip", "install", "--quiet", "--python", str(venv_python(root))]
+                + wanted.split("\n"),
+                check=True,
+                cwd=str(root),
+            )
+        # Written only after a successful sync: a failed sync leaves the old
+        # marker (or none), so the next call retries.
+        marker.write_text(wanted)
+    finally:
+        lock.unlink(missing_ok=True)
 
 
 _MISSING_MODULE_RE = re.compile(
@@ -95,9 +151,25 @@ def _run(
     script_path: str,
     args: list[str] | None,
     params: dict[str, str] | None,
+    timeout: int | None = None,
 ) -> dict:
+    if timeout is not None and (timeout < 1 or timeout > MAX_TIMEOUT):
+        raise ValueError(f"timeout must be between 1 and {MAX_TIMEOUT} seconds")
+    timeout = timeout or SCRIPT_TIMEOUT
+
     secrets = secrets_mod.load(root)
-    ensure_venv(root)
+    try:
+        ensure_venv(root)
+    except VenvSyncBusy:
+        return {
+            "stdout": "",
+            "stderr": "venv sync already in progress (another exec call is "
+                      "installing deps); retry in a few seconds",
+            "exit_code": -1,
+            "timed_out": False,
+            "truncated": False,
+            "duration_ms": 0,
+        }
 
     env = os.environ.copy()
     env.update(secrets)
@@ -105,20 +177,33 @@ def _run(
         env[f"PARAM_{k.upper()}"] = str(v)
 
     start = time.perf_counter()
+    # start_new_session puts the script in its own process group, so a
+    # timeout kill reaches grandchildren (spawned browsers) too. On Windows
+    # there is no process group here: proc.kill() only kills the direct
+    # child. Known limit.
+    proc = subprocess.Popen(
+        [str(venv_python(root)), script_path, *(args or [])],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        cwd=str(root),
+        start_new_session=(sys.platform != "win32"),
+    )
     try:
-        proc = subprocess.run(
-            [str(venv_python(root)), script_path, *(args or [])],
-            capture_output=True,
-            text=True,
-            timeout=SCRIPT_TIMEOUT,
-            env=env,
-            cwd=str(root),
-        )
-        stdout, stderr = proc.stdout, proc.stderr
+        stdout, stderr = proc.communicate(timeout=timeout)
         exit_code, timed_out = proc.returncode, False
     except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout or ""
-        stderr = (exc.stderr or "") + f"\n[timed out after {SCRIPT_TIMEOUT}s]"
+        if sys.platform != "win32":
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                proc.kill()
+        else:
+            proc.kill()
+        out_rest, err_rest = proc.communicate()
+        stdout = (exc.stdout or "") + (out_rest or "")
+        stderr = (exc.stderr or "") + (err_rest or "") + f"\n[timed out after {timeout}s]"
         exit_code, timed_out = -1, True
     duration_ms = round((time.perf_counter() - start) * 1000)
 
@@ -148,6 +233,7 @@ def run_script(
     path: str,
     args: list[str] | None = None,
     params: dict[str, str] | None = None,
+    timeout: int | None = None,
 ) -> dict:
     if not path:
         raise ValueError("path is required")
@@ -156,13 +242,14 @@ def run_script(
         raise ValueError(f"path {path} is outside the project directory")
     if not target.is_file():
         raise ValueError(f"{path} is not a file")
-    return _run(root, str(target), args, params)
+    return _run(root, str(target), args, params, timeout=timeout)
 
 
 def run_adhoc_script(
     root: Path,
     code: str,
     params: dict[str, str] | None = None,
+    timeout: int | None = None,
 ) -> dict:
     if not code:
         raise ValueError("code is required")
@@ -171,6 +258,6 @@ def run_adhoc_script(
     ) as f:
         f.write(code)
     try:
-        return _run(root, f.name, None, params)
+        return _run(root, f.name, None, params, timeout=timeout)
     finally:
         Path(f.name).unlink(missing_ok=True)

@@ -432,16 +432,22 @@ def run_script(
     path: str,
     args: list[str] | None = None,
     params: dict[str, str] | None = None,
+    timeout: int | None = None,
 ) -> str:
-    return _exec_result(exec_mod.run_script(PROJECT_DIR, path, args=args, params=params))
+    return _exec_result(
+        exec_mod.run_script(PROJECT_DIR, path, args=args, params=params, timeout=timeout)
+    )
 
 
 @mcp.tool(description=_tool_doc("run_adhoc_script"), output_schema=None)
 def run_adhoc_script(
     code: str,
     params: dict[str, str] | None = None,
+    timeout: int | None = None,
 ) -> str:
-    return _exec_result(exec_mod.run_adhoc_script(PROJECT_DIR, code, params=params))
+    return _exec_result(
+        exec_mod.run_adhoc_script(PROJECT_DIR, code, params=params, timeout=timeout)
+    )
 
 
 
@@ -499,6 +505,15 @@ def agent(action: str, id: str = "", query: str = "") -> str:
         lines = [f"Installed {result['name']} ({result['count']} files) at {result['path']}/."]
         for dep in result.get("dependencies", []):
             lines.append(report_strings.INSTALLED_DEPENDENCY_LINE.format(**dep))
+        for conn in result.get("connections", []):
+            if conn["status"] == "created":
+                lines.append(
+                    report_strings.CONNECTION_STUB_CREATED_LINE.format(kind=conn["kind"])
+                )
+            else:
+                lines.append(
+                    report_strings.CONNECTION_EXISTS_LINE.format(kind=conn["kind"])
+                )
         lines.append(f"Next step: run the setup in {result['path']}/commands/setup.md")
         return "\n".join(lines)
 

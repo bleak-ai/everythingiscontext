@@ -387,3 +387,15 @@ def test_ledger_has_no_flow_pipe(project):
     ids = [p["id"] for p in ledger.build(project)]
     assert "G6" in ids  # commands pipe
     assert not any("flow" in p["label"] for p in ledger.build(project))
+
+
+def test_run_adhoc_script_accepts_timeout(project):
+    out = server.run_adhoc_script(code="print('ok')", timeout=30)
+    assert "ok" in out
+
+
+def test_run_script_accepts_timeout(project):
+    script = project / "s.py"
+    script.write_text("print('ok')\n")
+    out = server.run_script(path="s.py", timeout=30)
+    assert "ok" in out
