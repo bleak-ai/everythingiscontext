@@ -1,20 +1,22 @@
-# workflows API
+# gcontext API
 
-The marketplace backend for workflow templates. A FastAPI service with a Postgres database. Templates are stored as file bundles (one row per file) plus indexed manifest fields parsed server-side from the bundle's `index.md` frontmatter (see `docs/agents.md` for the template standard).
-
-Publishing is submit-for-review: anyone can POST a bundle, it lands pending, and it appears publicly only after approval.
+A FastAPI service with a Postgres database. It tracks agent download counts and install telemetry.
 
 ## Endpoints
 
-- `GET /api/workflows`: approved directory (id, name, description, tags).
-- `GET /api/workflows/{id}`: one approved template with its full file bundle.
-- `POST /api/workflows`: submit a bundle for review. Body: `{"files": [{"path": "...", "content": "..."}]}`.
-- `GET /api/moderation/workflows`: pending entries (admin token).
-- `GET /api/moderation/workflows/{id}`: one pending bundle (admin token).
-- `POST /api/moderation/workflows/{id}/approve`: publish (admin token). Approving an id that is already published replaces the published content.
-- `POST /api/moderation/workflows/{id}/reject`: hide (admin token).
+### Public
 
-Moderation auth is a single bearer token: `Authorization: Bearer $ADMIN_TOKEN`.
+- `GET /api/workflows/{id}`: returns the download count for a workflow. When `x-source: site` is set, returns the count without incrementing. Otherwise increments the counter and returns the new value.
+
+### Telemetry
+
+- `POST /api/telemetry`: records an install event (install_id, version, os, platform). Rate-limited to one request per second per IP. Returns 204 on success.
+
+### Admin (requires `Authorization: Bearer $ADMIN_TOKEN`)
+
+- `GET /api/admin/workflows`: lists all workflows ordered by download count.
+- `GET /api/admin/installs`: lists the 200 most recent install events.
+- `DELETE /api/admin/installs/{install_id}`: deletes an install record.
 
 ## Configuration
 
@@ -37,10 +39,4 @@ Tests need Docker (they start a throwaway Postgres container):
 ```
 cd api
 uv run pytest
-```
-
-## Seed
-
-```
-ADMIN_TOKEN=... uv run python scripts/seed.py <template-folder> --api-url https://api.gcontext.ai
 ```
