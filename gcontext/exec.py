@@ -262,8 +262,21 @@ def run_adhoc_script(
 ) -> dict:
     if not code:
         raise ValueError("code is required")
+    try:
+        ensure_venv(root)
+    except VenvSyncBusy:
+        return {
+            "stdout": "",
+            "stderr": "venv sync already in progress (another exec call is "
+                      "installing deps); retry in a few seconds",
+            "exit_code": -1,
+            "timed_out": False,
+            "truncated": False,
+            "duration_ms": 0,
+        }
+    tmp_dir = venv_dir(root)
     with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".py", delete=False, dir=root
+        mode="w", suffix=".py", delete=False, dir=tmp_dir
     ) as f:
         f.write(code)
     try:
