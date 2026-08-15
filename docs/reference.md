@@ -4,7 +4,7 @@ Details on secrets, commands, the dashboard, archiving, the context ledger, and 
 
 ## Secrets
 
-`connection.yaml` declares secret names; `secrets.env` holds the values. When the agent calls `run_script` or `run_adhoc_script`, the values are injected as environment variables and scrubbed from the script's output. The agent can know that `STRIPE_API_KEY` exists and use it in a script, but never reads the value. `secrets.env` is gitignored by `init` and the `write_file` tool refuses to touch it.
+`connection.yaml` declares secret names; `secrets.env` holds the values. When the agent calls `run_script` or `run_adhoc_script`, the values are injected as environment variables and scrubbed from the script's output. The agent can know that `STRIPE_API_KEY` exists and use it in a script, but never reads the value. `secrets.env` is gitignored by `init` and the `write_file` tool refuses to touch it. Scrubbing uses exact substring matching on values longer than 3 characters. Base64-encoded or URL-encoded forms of a secret may not match.
 
 One honest caveat: `secrets.env` is plain text on disk. gcontext never shows
 values to the agent, but any other program with filesystem access, including
