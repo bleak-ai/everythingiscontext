@@ -242,6 +242,15 @@ def run_script(
         raise ValueError(f"path {path} is outside the project directory")
     if not target.is_file():
         raise ValueError(f"{path} is not a file")
+    if target.name == "secrets.env":
+        return {
+            "stdout": "",
+            "stderr": "Error: cannot execute secrets.env",
+            "exit_code": -1,
+            "timed_out": False,
+            "truncated": False,
+            "duration_ms": 0,
+        }
     return _run(root, str(target), args, params, timeout=timeout)
 
 
