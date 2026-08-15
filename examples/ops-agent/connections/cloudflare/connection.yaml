@@ -1,5 +1,6 @@
 name: cloudflare
 description: DNS and CDN management via Cloudflare API
+kind: deploy-target
 secrets:
   - CF_API_KEY
   - CF_API_EMAIL

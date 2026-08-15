@@ -1,3 +1,4 @@
 name: ops-agent
 description: An operations agent that manages Stripe billing and Cloudflare infrastructure.
+install_id: example-ops-agent
 port: 4299
