@@ -356,9 +356,8 @@ def register_framework_prompts(mcp, root: Path | None = None) -> int:
     """Register the framework's own prompts, shipped in the package.
 
     Same file format as project commands, but framework-owned: they update
-    with the package and exist in every instance. Currently two: `setup`,
-    the guided add-a-connection / add-a-module / health-check flow, and
-    `explain`, the what-is-this-agent walkthrough.
+    with the package and exist in every instance (agents, ask, explain,
+    setup).
 
     When `root` is given, the $setup_report and $explain_report
     placeholders are filled at invocation time with the code-built reports
@@ -379,7 +378,7 @@ def register_framework_prompts(mcp, root: Path | None = None) -> int:
     prompts_dir = Path(__file__).parent / "prompts"
     count = 0
     for path in sorted(prompts_dir.glob("*.md")):
-        if path.stem in ("framework-instructions", "resources", "README"):
+        if path.stem in _FRAMEWORK_SKIP:
             continue
         meta, body = parse_command(path.read_text(encoding="utf-8"))
         fn = _render_fn(body, meta.get("parameters") or [], extra=extra)
