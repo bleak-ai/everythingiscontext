@@ -18,11 +18,19 @@ The manifest declares what the connection needs. All fields:
 ```yaml
 name: github                  # folder name, lowercase
 description: GitHub REST API - repos, issues, pull requests
+kind: source-control           # capability type (see valid values below)
 secrets:                      # secret NAMES only, never values
   - GITHUB_TOKEN
 deps:                         # Python packages the scripts import
   - requests
 ```
+
+`kind` declares the capability type of the connection. The framework
+validates it against a fixed enum. Valid values: `ticket-tracker`,
+`product-api`, `keyword-source`, `browser`, `source-control`,
+`package-registry`, `deploy-target`, `notification-sink`. Agent manifests
+reference connections by kind, not by product name, so the kind is what
+links a connection to an agent's requirements.
 
 `secrets` lists names. The values live in `secrets.env` at the folder root,
 one `NAME=value` per line, gitignored. The server reads `secrets.env` live,
@@ -102,6 +110,7 @@ Copy, adjust, and add the secret value to `secrets.env`.
 # connections/github/connection.yaml
 name: github
 description: GitHub REST API - repos, issues, pull requests
+kind: source-control
 secrets:
   - GITHUB_TOKEN
 deps:
@@ -112,6 +121,7 @@ deps:
 # connections/linear/connection.yaml
 name: linear
 description: Linear GraphQL API - issues, projects, cycles
+kind: ticket-tracker
 secrets:
   - LINEAR_API_KEY
 deps:
@@ -122,6 +132,7 @@ deps:
 # connections/postgres/connection.yaml
 name: postgres
 description: Main Postgres database
+kind: product-api
 secrets:
   - POSTGRES_DSN
 deps:
@@ -132,6 +143,7 @@ deps:
 # connections/<service>/connection.yaml - the generic shape
 name: my-service
 description: <what this service does for the agent>
+kind: <one of the valid kind values>
 secrets:
   - MY_SERVICE_API_KEY
 deps:
