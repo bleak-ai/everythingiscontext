@@ -79,6 +79,46 @@ def module_files(root: Path, name: str) -> list[str]:
     return files
 
 
+def discover_agents(root: Path) -> dict[str, ModuleManifest]:
+    """Scan agents/ for folders with index.md frontmatter."""
+    from .commands import parse_command
+
+    agents_dir = root / "agents"
+    if not agents_dir.is_dir():
+        return {}
+    result = {}
+    for item in sorted(agents_dir.iterdir()):
+        if not item.is_dir():
+            continue
+        index = item / "index.md"
+        if index.exists():
+            try:
+                meta, _ = parse_command(index.read_text(encoding="utf-8"))
+                manifest = ModuleManifest(
+                    name=meta.get("name", item.name),
+                    description=meta.get("description", ""),
+                    tags=meta.get("tags", []),
+                )
+            except (ValueError, KeyError):
+                manifest = ModuleManifest(name=item.name, description="")
+        else:
+            manifest = ModuleManifest(name=item.name, description="")
+        result[item.name] = manifest
+    return result
+
+
+def agent_files(root: Path, name: str) -> list[str]:
+    """List content files in an agent folder."""
+    agent_dir = root / "agents" / name
+    if not agent_dir.is_dir():
+        return []
+    files = []
+    for f in sorted(agent_dir.rglob("*")):
+        if f.is_file() and f.name != ".gitkeep":
+            files.append(str(f.relative_to(root)))
+    return files
+
+
 def archived(root: Path) -> dict[str, list[str]]:
     """Names of archived items per category, from archive/{connections,modules}/.
 
@@ -87,7 +127,7 @@ def archived(root: Path) -> dict[str, list[str]]:
     folder move; there is no metadata and no automatic behavior.
     """
     result = {}
-    for category in ("connections", "modules"):
+    for category in ("connections", "modules", "agents"):
         d = root / "archive" / category
         if d.is_dir():
             items = [i.name for i in sorted(d.iterdir()) if i.is_dir()]

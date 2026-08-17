@@ -2,6 +2,7 @@
 add, the connection kind matching, and the code-built Block 1 report."""
 
 import asyncio
+import re
 
 import pytest
 from fastmcp import Client, FastMCP
@@ -32,7 +33,7 @@ deps: []
 
 
 def _write_agent(root, index_md=INDEX_MD, name="browser-recipes"):
-    module = root / "modules" / name
+    module = root / "agents" / name
     module.mkdir(parents=True)
     (module / "index.md").write_text(index_md)
     return module
@@ -67,16 +68,18 @@ def test_add_stamps_setup_pending(tmp_path, monkeypatch):
     monkeypatch.setattr(registry, "_ping_download", lambda _id: None)
     registry.install_agent(tmp_path, "browser-recipes")
 
-    installed = (tmp_path / "modules" / "browser-recipes" / "index.md").read_text()
+    installed = (tmp_path / "agents" / "browser-recipes" / "index.md").read_text()
     meta, _ = commands.parse_command(installed)
     assert meta["setup"] == "pending"
-    # Everything except the added line is byte for byte the registry copy.
-    assert installed.replace("setup: pending\n", "", 1) == INDEX_MD
+    # Everything except the added lines is byte for byte the registry copy.
+    cleaned = installed.replace("setup: pending\n", "", 1)
+    cleaned = re.sub(r"<!-- Base path: .+? -->\n", "", cleaned)
+    assert cleaned == INDEX_MD
     # Untouched files stay identical.
-    assert (tmp_path / "modules" / "browser-recipes" / "steps" / "1-sync.md").read_text() == "# Step 1\n"
+    assert (tmp_path / "agents" / "browser-recipes" / "steps" / "1-sync.md").read_text() == "# Step 1\n"
     # The manifest hashes the unstamped content: removing the stamp
     # restores a clean state against the registry copy.
-    manifest = registry.read_manifest(tmp_path / "modules" / "browser-recipes")
+    manifest = registry.read_manifest(tmp_path / "agents" / "browser-recipes")
     assert manifest["files"]["index.md"] == registry.file_hash(INDEX_MD)
 
 

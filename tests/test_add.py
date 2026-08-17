@@ -98,20 +98,23 @@ def agent(tmp_path):
     return tmp_path / "a"
 
 
-def test_add_installs_bundle_into_modules(registry, agent):
+def test_add_installs_bundle_into_agents(registry, agent):
     registry[0] = _build_tarball(_registry_files())
     result = run_cli("add", "demo-flow", cwd=agent)
     assert result.returncode == 0, result.stderr
-    module = agent / "modules" / "demo-flow"
+    module = agent / "agents" / "demo-flow"
     for f in BUNDLE_FILES:
         installed = (module / f["path"]).read_text()
         if f["path"] == "index.md":
-            # add stamps the module as never set up; the rest is untouched.
-            assert installed.replace("setup: pending\n", "", 1) == f["content"]
+            # add stamps the module as never set up and injects a base-path comment.
+            cleaned = installed.replace("setup: pending\n", "", 1)
+            cleaned = cleaned.replace("<!-- Base path: agents/demo-flow/ -->\n", "")
+            assert cleaned == f["content"]
             assert "setup: pending" in installed
+            assert "<!-- Base path: agents/demo-flow/ -->" in installed
         else:
             assert installed == f["content"]
-    assert "installed Demo Flow (5 files) at modules/demo-flow/" in result.stdout
+    assert "installed Demo Flow (5 files) at agents/demo-flow/" in result.stdout
     assert "Next steps:" in result.stdout
     assert "1. Stop the server (Ctrl-C)." in result.stdout
     assert "2. Start it again: gcontext up ." in result.stdout
@@ -137,17 +140,17 @@ def test_add_with_project_argument_names_directory(registry, agent):
     assert f"2. Start it again: gcontext up {agent}" in result.stdout
 
 
-def test_add_existing_module_warns_and_stops(registry, agent):
+def test_add_existing_agent_warns_and_stops(registry, agent):
     registry[0] = _build_tarball(_registry_files())
-    marker = agent / "modules" / "demo-flow" / "personal.md"
+    marker = agent / "agents" / "demo-flow" / "personal.md"
     marker.parent.mkdir(parents=True)
     marker.write_text("mine")
     result = run_cli("add", "demo-flow", cwd=agent)
     assert result.returncode == 1
     assert "already exists" in result.stderr
-    assert "never overwritten" in result.stderr
+    assert "gcontext update" in result.stderr
     assert marker.read_text() == "mine"
-    assert not (agent / "modules" / "demo-flow" / "index.md").exists()
+    assert not (agent / "agents" / "demo-flow" / "index.md").exists()
 
 
 def test_add_unknown_id_reports_error(registry, agent):
@@ -164,7 +167,7 @@ def test_add_rejects_bundle_without_index(registry, agent):
     result = run_cli("add", "demo-flow", cwd=agent)
     assert result.returncode == 1
     assert "invalid agent bundle" in result.stderr
-    assert not (agent / "modules" / "demo-flow").exists()
+    assert not (agent / "agents" / "demo-flow").exists()
 
 
 def test_add_rejects_bad_frontmatter(registry, agent):
@@ -173,7 +176,7 @@ def test_add_rejects_bad_frontmatter(registry, agent):
     result = run_cli("add", "demo-flow", cwd=agent)
     assert result.returncode == 1
     assert "invalid agent bundle" in result.stderr
-    assert not (agent / "modules" / "demo-flow").exists()
+    assert not (agent / "agents" / "demo-flow").exists()
 
 
 def test_add_rejects_path_traversal(registry, agent):
@@ -182,8 +185,8 @@ def test_add_rejects_path_traversal(registry, agent):
     result = run_cli("add", "demo-flow", cwd=agent)
     assert result.returncode == 1
     assert "unsafe file path" in result.stderr
-    assert not (agent / "modules" / "demo-flow").exists()
-    assert not (agent / "modules" / "evil.md").exists()
+    assert not (agent / "agents" / "demo-flow").exists()
+    assert not (agent / "agents" / "evil.md").exists()
     assert not (agent / "evil.md").exists()
 
 
@@ -196,8 +199,8 @@ def test_add_folder_named_from_frontmatter_id(registry, agent):
     registry[0] = _build_tarball(files)
     result = run_cli("add", "demo-flow", cwd=agent)
     assert result.returncode == 0, result.stderr
-    assert (agent / "modules" / "real-name" / "index.md").exists()
-    assert not (agent / "modules" / "demo-flow").exists()
+    assert (agent / "agents" / "real-name" / "index.md").exists()
+    assert not (agent / "agents" / "demo-flow").exists()
 
 
 def test_add_github_url(registry, agent, monkeypatch):
@@ -220,7 +223,7 @@ def test_add_github_url(registry, agent, monkeypatch):
     local_url = os.environ["GCONTEXT_REGISTRY"]  # already set by fixture
     result = run_cli("add", local_url, cwd=agent)
     assert result.returncode == 0, result.stderr
-    module = agent / "modules" / "demo-flow"
+    module = agent / "agents" / "demo-flow"
     assert (module / "index.md").exists()
 
 
@@ -281,7 +284,7 @@ def test_add_succeeds_when_ping_endpoint_down(registry, agent, monkeypatch):
     registry[0] = _build_tarball(_registry_files())
     result = run_cli("add", "demo-flow", cwd=agent)
     assert result.returncode == 0, result.stderr
-    assert (agent / "modules" / "demo-flow" / "index.md").exists()
+    assert (agent / "agents" / "demo-flow" / "index.md").exists()
 
 
 def test_add_url_install_does_not_ping(registry, agent, ping_server):

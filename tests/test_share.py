@@ -108,7 +108,7 @@ def test_share_validates_and_prints_pr_instructions(template, request_log):
     server, log = request_log
     result = run_cli("share", str(template), cwd=template.parent)
     assert result.returncode == 0, result.stderr
-    assert "validated test-flow" in result.stdout
+    assert "validated agent test-flow" in result.stdout
     assert "files)" in result.stdout
     assert "bleak-ai/agents" in result.stdout
     assert "PR" in result.stdout or "pull request" in result.stdout.lower() or "pr" in result.stdout.lower()
@@ -243,7 +243,7 @@ def test_share_missing_example_run(tmp_path):
 def test_share_compliant_template_passes(template):
     result = run_cli("share", str(template), cwd=template.parent)
     assert result.returncode == 0, result.stderr
-    assert "validated test-flow" in result.stdout
+    assert "validated agent test-flow" in result.stdout
 
 
 def test_share_rejects_unknown_connection_kind(template):
@@ -347,7 +347,7 @@ def test_share_skips_dotfiles(template):
     result = run_cli("share", str(template), cwd=template.parent)
     assert result.returncode == 0, result.stderr
     # Dotfiles are skipped by bundle_files; just confirm validation passes
-    assert "validated test-flow" in result.stdout
+    assert "validated agent test-flow" in result.stdout
 
 
 def test_share_skips_pycache(template):
@@ -356,7 +356,7 @@ def test_share_skips_pycache(template):
     (cache / "mod.pyc").write_bytes(b"\x00\x01")
     result = run_cli("share", str(template), cwd=template.parent)
     assert result.returncode == 0, result.stderr
-    assert "validated test-flow" in result.stdout
+    assert "validated agent test-flow" in result.stdout
 
 
 def test_share_skips_binary_with_warning(template):

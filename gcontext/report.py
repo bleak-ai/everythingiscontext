@@ -34,24 +34,27 @@ def _available_kinds(project_dir: Path) -> set[str]:
 
 def _agents(project_dir: Path) -> list[tuple[str, dict, list, Path]]:
     """(id, frontmatter, declared connections, path) per agent module, sorted."""
-    modules_dir = project_dir / "modules"
-    if not modules_dir.is_dir():
-        return []
     agents = []
-    for item in sorted(modules_dir.iterdir()):
-        if not item.is_dir():
+    for folder_name in ("agents", "modules"):
+        scan_dir = project_dir / folder_name
+        if not scan_dir.is_dir():
             continue
-        index = item / "index.md"
-        if not index.is_file():
-            continue
-        try:
-            meta, _ = parse_command(index.read_text(encoding="utf-8"))
-        except (ValueError, OSError, yaml.YAMLError):
-            continue
-        declared = meta.get("connections")
-        if not isinstance(declared, list) or not declared:
-            continue
-        agents.append((meta.get("id") or item.name, meta, declared, item))
+        for item in sorted(scan_dir.iterdir()):
+            if not item.is_dir():
+                continue
+            index = item / "index.md"
+            if not index.is_file():
+                continue
+            try:
+                meta, _ = parse_command(index.read_text(encoding="utf-8"))
+            except (ValueError, OSError, yaml.YAMLError):
+                continue
+            declared = meta.get("connections")
+            if not isinstance(declared, list) or not declared:
+                continue
+            agent_id = meta.get("id") or item.name
+            if not any(a[0] == agent_id for a in agents):
+                agents.append((agent_id, meta, declared, item))
     return agents
 
 

@@ -4,6 +4,7 @@ import { C, mono, UiProvider, useHover, useIsMobile } from "./ui.jsx";
 import Overview from "./Overview.jsx";
 import Connections from "./Connections.jsx";
 import Modules from "./Modules.jsx";
+import Agents from "./Agents.jsx";
 import Commands from "./Commands.jsx";
 import Files from "./Files.jsx";
 import Activity from "./Activity.jsx";
@@ -31,6 +32,7 @@ function Sidebar({ section, setSection, project, sessions }) {
     { key: "overview", label: "Overview" },
     { key: "connections", label: "Connections" },
     { key: "modules", label: "Modules" },
+    { key: "agents", label: "Agents" },
     { key: "commands", label: "Commands" },
     { key: "files", label: "Files" },
     { key: "activity", label: "Activity" },
@@ -65,7 +67,7 @@ function Sidebar({ section, setSection, project, sessions }) {
   );
 }
 
-const SECTIONS = ["overview", "connections", "modules", "commands", "files", "activity"];
+const SECTIONS = ["overview", "connections", "modules", "agents", "commands", "files", "activity"];
 const savedSection = () => {
   const s = localStorage.getItem("gc.section");
   return SECTIONS.includes(s) ? s : "overview";
@@ -123,6 +125,7 @@ export default function App() {
             {section === "overview" && <Overview project={project} sessions={sessions} />}
             {section === "connections" && <Connections />}
             {section === "modules" && <Modules />}
+            {section === "agents" && <Agents />}
             {section === "commands" && <Commands />}
             {section === "files" && <Files />}
             {section === "activity" && <Activity />}

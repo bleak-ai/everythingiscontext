@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 import pytest
 from fastmcp import Client, FastMCP
@@ -25,6 +26,15 @@ PY_COMMAND = """\
 # ---
 print("would cancel")
 """
+
+
+@pytest.fixture(autouse=True)
+def _reset_manifest():
+    commands._DISABLED = set()
+    commands._STABLE_KEYS.clear()
+    yield
+    commands._DISABLED = set()
+    commands._STABLE_KEYS.clear()
 
 
 @pytest.fixture
@@ -440,3 +450,112 @@ def test_register_framework_prompts_setup():
         "Block 6: completion",
     ):
         assert step in filled_text
+
+
+# -- manifest & stable-key tests --
+
+
+def test_read_manifest_returns_disabled_set(tmp_path):
+    (tmp_path / "commands.yaml").write_text(
+        "disabled:\n"
+        "  - hetzner-vps/show-stats\n"
+        "  - framework/explain\n"
+    )
+    disabled = commands.read_manifest(tmp_path / "commands.yaml")
+    assert disabled == {"hetzner-vps/show-stats", "framework/explain"}
+
+
+def test_read_manifest_missing_file_returns_empty(tmp_path):
+    disabled = commands.read_manifest(tmp_path / "commands.yaml")
+    assert disabled == set()
+
+
+def test_read_manifest_empty_disabled_returns_empty(tmp_path):
+    (tmp_path / "commands.yaml").write_text("disabled: []\n")
+    disabled = commands.read_manifest(tmp_path / "commands.yaml")
+    assert disabled == set()
+
+
+def test_stable_key_project_command(tmp_path):
+    path = tmp_path / "connections" / "stripe" / "commands" / "cancel.py"
+    assert commands._stable_key(path, tmp_path) == "stripe/cancel"
+
+
+def test_stable_key_module_command(tmp_path):
+    path = tmp_path / "modules" / "lab-repo" / "commands" / "update-gcontext.md"
+    assert commands._stable_key(path, tmp_path) == "lab-repo/update-gcontext"
+
+
+def test_stable_key_framework(tmp_path):
+    path = Path("/some/package/prompts/setup.md")
+    assert commands._stable_key(path, tmp_path) == "framework/setup"
+
+
+def test_manifest_disables_project_command(tmp_path):
+    _write_commands(tmp_path)
+    (tmp_path / "commands.yaml").write_text(
+        "disabled:\n"
+        "  - stripe/cancel\n"
+    )
+    mcp_inst = FastMCP("t")
+    commands.load_manifest(tmp_path)
+    commands.register_commands(mcp_inst, tmp_path)
+    names = {p.name for p in asyncio.run(_prompts(mcp_inst))}
+    assert "refund_reply" in names
+    assert "cancel" not in names
+
+
+def test_no_manifest_registers_all(tmp_path):
+    _write_commands(tmp_path)
+    commands.load_manifest(tmp_path)  # no commands.yaml exists
+    mcp_inst = FastMCP("t")
+    commands.register_commands(mcp_inst, tmp_path)
+    names = {p.name for p in asyncio.run(_prompts(mcp_inst))}
+    assert "refund_reply" in names
+    assert "cancel" in names
+
+
+def test_manifest_disables_framework_prompt(tmp_path):
+    (tmp_path / "commands.yaml").write_text(
+        "disabled:\n"
+        "  - framework/explain\n"
+    )
+    mcp_inst = FastMCP("t")
+    commands.load_manifest(tmp_path)
+    commands.register_framework_prompts(mcp_inst, tmp_path)
+    names = {p.name for p in asyncio.run(_prompts(mcp_inst))}
+    assert "setup" in names
+    assert "agents" in names
+    assert "ask" in names
+    assert "explain" not in names
+
+
+def test_manifest_disables_agent_command_at_install(tmp_path):
+    (tmp_path / "commands.yaml").write_text(
+        "disabled:\n"
+        "  - newmod/deploy\n"
+    )
+    mcp_inst = FastMCP("t")
+    commands.load_manifest(tmp_path)
+    commands.register_commands(mcp_inst, tmp_path)
+    d = tmp_path / "modules" / "newmod" / "commands"
+    d.mkdir(parents=True)
+    (d / "deploy.md").write_text("---\ndescription: d\n---\ndeploy body")
+    commands.register_agent_commands(mcp_inst, tmp_path, "newmod")
+    names = {p.name for p in asyncio.run(_prompts(mcp_inst))}
+    assert "deploy" not in names
+    assert "newmod__deploy" not in names
+
+
+def test_manifest_disables_generated_command(tmp_path):
+    _write_template(tmp_path)
+    (tmp_path / "commands.yaml").write_text(
+        "disabled:\n"
+        "  - cookbook/recipe_export-invoices\n"
+    )
+    mcp_inst = FastMCP("t")
+    commands.load_manifest(tmp_path)
+    commands.register_commands(mcp_inst, tmp_path)
+    names = {p.name for p in asyncio.run(_prompts(mcp_inst))}
+    assert "recipe_export_invoices" not in names
+    assert "recipe_check_orders" in names

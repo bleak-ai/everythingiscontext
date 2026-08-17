@@ -1,5 +1,5 @@
-"""Commands: files under `connections/*/commands/` and `modules/*/commands/`
-exposed as MCP prompts.
+"""Commands: files under `connections/*/commands/`, `modules/*/commands/`, and
+`agents/*/commands/` exposed as MCP prompts.
 
 Two file types (design ported from the maat-agent S13 spike). Both surface as
 slash commands in Claude Code (`/mcp__<server>__<command>`); neither adds a
@@ -41,7 +41,63 @@ from typing import Any
 import yaml
 
 FRONTMATTER_DELIM = "---"
-COMMAND_GLOBS = ("connections/*/commands/*", "modules/*/commands/*")
+COMMAND_GLOBS = ("connections/*/commands/*", "modules/*/commands/*", "agents/*/commands/*")
+
+_DISABLED: set[str] = set()
+_STABLE_KEYS: dict[str, str] = {}
+
+
+def read_manifest(path: Path) -> set[str]:
+    """Read commands.yaml and return the set of disabled command keys.
+
+    Each key is ``owner/stem`` (e.g. ``hetzner-vps/show-stats``).
+    Returns an empty set when the file is missing or has no disabled list.
+    """
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except OSError:
+        return set()
+    if not isinstance(data, dict):
+        return set()
+    disabled = data.get("disabled")
+    if not isinstance(disabled, list):
+        return set()
+    return set(disabled)
+
+
+def load_manifest(root: Path) -> set[str]:
+    """Load commands.yaml from *root* and cache the disabled set in ``_DISABLED``."""
+    global _DISABLED
+    _DISABLED = read_manifest(root / "commands.yaml")
+    return _DISABLED
+
+
+def _stable_key(path: Path, root: Path) -> str:
+    """Compute the stable ``owner/stem`` identity for a command file.
+
+    Framework prompts live outside *root*, so ``path.relative_to(root)``
+    raises ValueError.  Return ``framework/{path.stem}`` in that case.
+    Project commands follow ``{connections|modules|agents}/<owner>/commands/<stem>.ext``;
+    return ``<owner>/<stem>``.
+    """
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return f"framework/{path.stem}"
+    parts = rel.parts
+    if len(parts) >= 4 and parts[2] == "commands":
+        return f"{parts[1]}/{path.stem}"
+    return f"{parts[0]}/{path.stem}"
+
+
+def _stable_key_generated(owner: str, template_stem: str, entry_name: str) -> str:
+    """Stable key for template-generated commands."""
+    return f"{owner}/{template_stem}_{entry_name}"
+
+
+def _is_disabled(key: str) -> bool:
+    """Check if a command's stable key is in ``_DISABLED``."""
+    return key in _DISABLED
 
 
 def parse_command(text: str) -> tuple[dict[str, Any], str]:
@@ -244,6 +300,9 @@ def _expand_template(mcp, root: Path, path: Path) -> int:
         # Naming rule and picker rationale: see register_commands.
         short = f"{path.stem}_{match.name}".replace("-", "_")
         name = short if short not in _REGISTERED else _short_name(f"{owner}__{short}")
+        gen_key = _stable_key_generated(owner, path.stem, match.name)
+        if _is_disabled(gen_key):
+            continue
         entry_meta = _entry_frontmatter(match / "index.md")
         if entry_meta is None:
             print(f"  ! skipping generated command {name}: malformed "
@@ -286,6 +345,7 @@ def _expand_template(mcp, root: Path, path: Path) -> int:
             print(f"  ! could not register prompt {name}: {e}", file=sys.stderr)
             continue
         _REGISTERED[name] = str(path)
+        _STABLE_KEYS[name] = _stable_key_generated(owner, path.stem, match.name)
         names.add(name)
         count += 1
     GENERATED[str(path)] = {"owner_dir": str(owner_dir), "names": names}
@@ -380,12 +440,15 @@ def register_framework_prompts(mcp, root: Path | None = None) -> int:
     for path in sorted(prompts_dir.glob("*.md")):
         if path.stem in _FRAMEWORK_SKIP:
             continue
+        if _is_disabled(f"framework/{path.stem}"):
+            continue
         meta, body = parse_command(path.read_text(encoding="utf-8"))
         fn = _render_fn(body, meta.get("parameters") or [], extra=extra)
         fn.__name__ = path.stem
         mcp.add_prompt(
             Prompt.from_function(fn, name=path.stem, description=meta.get("description", ""))
         )
+        _STABLE_KEYS[path.stem] = f"framework/{path.stem}"
         count += 1
     return count
 
@@ -433,6 +496,7 @@ def register_commands(mcp, root: Path) -> int:
     after, so a file always wins a name clash."""
     GENERATED.clear()
     _REGISTERED.clear()
+    _STABLE_KEYS.clear()
     _REGISTERED.update({n: "framework" for n in _reserved_names()})
     files: list[Path] = []
     templates: list[Path] = []
@@ -450,22 +514,30 @@ def register_commands(mcp, root: Path) -> int:
             print(f"  ! skipping command {path}: name {name} already "
                   "taken by another command file", file=sys.stderr)
             continue
+        key = _stable_key(path, root)
+        if _is_disabled(key):
+            continue
         if _register_one(mcp, root, path, name):
+            _STABLE_KEYS[name] = _stable_key(path, root)
             count += 1
     for path in templates:
         count += _expand_template(mcp, root, path)
     return count
 
 
-def register_module_commands(mcp, root: Path, module_name: str) -> int:
-    """Register commands for a single module (e.g. after install or update).
+def register_agent_commands(mcp, root: Path, module_name: str) -> int:
+    """Register commands for a single agent or module (e.g. after install or update).
+
+    Checks agents/<name>/commands/ first, falls back to modules/<name>/commands/.
 
     Naming per command file, three branches: a name this file already holds
     is kept (re-registering replaces the prompt in place); otherwise the
     short name when it is free or held only by a template-generated prompt
     (the generated prompt is evicted, files win at runtime too); otherwise
     the owner-prefixed fallback."""
-    commands_dir = root / "modules" / module_name / "commands"
+    commands_dir = root / "agents" / module_name / "commands"
+    if not commands_dir.is_dir():
+        commands_dir = root / "modules" / module_name / "commands"
     if not commands_dir.is_dir():
         return 0
     # Defense in depth: register_commands already seeds these into _REGISTERED.
@@ -492,8 +564,15 @@ def register_module_commands(mcp, root: Path, module_name: str) -> int:
             name = short
         else:
             name = prefixed
+        key = _stable_key(path, root)
+        if _is_disabled(key):
+            continue
         if _register_one(mcp, root, path, name):
+            _STABLE_KEYS[name] = _stable_key(path, root)
             count += 1
     for path in templates:
         count += _expand_template(mcp, root, path)
     return count
+
+
+register_module_commands = register_agent_commands

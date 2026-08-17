@@ -130,6 +130,7 @@ def project(tmp_path, monkeypatch):
     p.mkdir()
     (p / "gcontext.yaml").write_text("name: test-agent\n")
     (p / "modules").mkdir()
+    (p / "agents").mkdir()
     (p / "connections").mkdir()
     monkeypatch.setattr(server, "PROJECT_DIR", p)
     return p
@@ -187,11 +188,11 @@ def test_install_creates_module_and_manifest(registry, project):
     assert "Demo Flow" in result
     assert "commands/setup.md" in result
 
-    module = project / "modules" / "demo-flow"
+    module = project / "agents" / "demo-flow"
     assert (module / "index.md").exists()
     assert (module / "steps" / "1-sync.md").exists()
 
-    manifest = yaml.safe_load((module / ".template.yaml").read_text())
+    manifest = yaml.safe_load((module / ".installed").read_text())
     assert manifest["template"] == "demo-flow"
     assert manifest["installed_ref"] == "unknown"
     for f in BUNDLE_FILES:
@@ -226,46 +227,46 @@ def test_unknown_action(registry, project):
 def test_template_manifest_hidden_from_list_dir(project):
     mod = project / "modules" / "demo"
     mod.mkdir(parents=True)
-    (mod / ".template.yaml").write_text("template: demo\n")
+    (mod / ".installed").write_text("template: demo\n")
     (mod / "index.md").write_text("# demo\n")
     result = fs.list_dir(project, "modules/demo")
     assert "index.md" in result
-    assert ".template.yaml" not in result
+    assert ".installed" not in result
 
 
 def test_template_manifest_hidden_from_grep(project):
     mod = project / "modules" / "demo"
     mod.mkdir(parents=True)
-    (mod / ".template.yaml").write_text("template: demo\n")
+    (mod / ".installed").write_text("template: demo\n")
     (mod / "index.md").write_text("# demo\n")
     result = fs.grep(project, "template", "modules")
-    assert ".template.yaml" not in result
+    assert ".installed" not in result
 
 
 def test_template_manifest_hidden_from_walk(project):
     mod = project / "modules" / "demo"
     mod.mkdir(parents=True)
-    (mod / ".template.yaml").write_text("template: demo\n")
+    (mod / ".installed").write_text("template: demo\n")
     (mod / "index.md").write_text("# demo\n")
     walked = fs.walk_files(project)
-    assert not any(".template.yaml" in p for p in walked)
+    assert not any(".installed" in p for p in walked)
 
 
 def test_template_manifest_still_readable(project):
     mod = project / "modules" / "demo"
     mod.mkdir(parents=True)
-    (mod / ".template.yaml").write_text("template: demo\n")
-    result = fs.read_file(project, "modules/demo/.template.yaml")
+    (mod / ".installed").write_text("template: demo\n")
+    result = fs.read_file(project, "modules/demo/.installed")
     assert "template: demo" in result
 
 
 def test_index_warning_ignores_template_manifest(project):
     mod = project / "modules" / "demo"
     mod.mkdir(parents=True)
-    (mod / ".template.yaml").write_text("template: demo\n")
+    (mod / ".installed").write_text("template: demo\n")
     (mod / "steps").mkdir()
     result = fs.write_file(project, "modules/demo/index.md", "# demo\n\n- [steps](steps/)\n")
-    assert ".template.yaml" not in result
+    assert ".installed" not in result
 
 
 # --- Check tests ---
@@ -279,7 +280,7 @@ def _finish_setup(module_dir):
 def test_check_up_to_date(registry, project):
     registry[0] = _tarball_with_catalog()
     server.agent(action="install", id="demo-flow")
-    _finish_setup(project / "modules" / "demo-flow")
+    _finish_setup(project / "agents" / "demo-flow")
     result = server.agent(action="check", id="demo-flow")
     assert "up to date" in result
 
@@ -299,7 +300,7 @@ def test_check_detects_changes(registry, project):
     new_registry.append({"path": "registry.json", "content": json.dumps(CATALOG)})
     registry[0] = _build_tarball(new_registry)
 
-    (project / "modules" / "demo-flow" / "commands" / "setup.md").write_text("local edit")
+    (project / "agents" / "demo-flow" / "commands" / "setup.md").write_text("local edit")
 
     result = server.agent(action="check", id="demo-flow")
     assert "upstream changed" in result
@@ -323,7 +324,7 @@ def test_update_applies_three_way(registry, project):
     registry[0] = _tarball_with_catalog()
     server.agent(action="install", id="demo-flow")
 
-    (project / "modules" / "demo-flow" / "commands" / "setup.md").write_text("local edit")
+    (project / "agents" / "demo-flow" / "commands" / "setup.md").write_text("local edit")
 
     new_step = "# Step 1 UPDATED\n"
     new_index = INDEX_MD.replace("Objective paragraph.", "Updated objective.")
@@ -341,26 +342,26 @@ def test_update_applies_three_way(registry, project):
     new_registry.append({"path": "registry.json", "content": json.dumps(CATALOG)})
     registry[0] = _build_tarball(new_registry)
 
-    (project / "modules" / "demo-flow" / "index.md").write_text(
+    (project / "agents" / "demo-flow" / "index.md").write_text(
         INDEX_MD.replace("Objective paragraph.", "My local objective.")
     )
 
     result = server.agent(action="update", id="demo-flow")
 
-    assert (project / "modules" / "demo-flow" / "steps" / "1-sync.md").read_text() == new_step
-    assert (project / "modules" / "demo-flow" / "commands" / "setup.md").read_text() == "local edit"
-    assert (project / "modules" / "demo-flow" / "index.md.new").exists()
-    assert (project / "modules" / "demo-flow" / "steps" / "2-verify.md").exists()
-    assert "Conflicts" in result or "conflicts" in result.lower()
+    assert (project / "agents" / "demo-flow" / "steps" / "1-sync.md").read_text() == new_step
+    assert (project / "agents" / "demo-flow" / "commands" / "setup.md").read_text() == "local edit"
+    assert (project / "agents" / "demo-flow" / "index.pre-update.md").exists()
+    assert (project / "agents" / "demo-flow" / "steps" / "2-verify.md").exists()
+    assert "backed up" in result.lower() or "backed_up" in result.lower()
 
 
 def test_update_without_manifest_errors(registry, project):
-    mod = project / "modules" / "handmade"
+    mod = project / "agents" / "handmade"
     mod.mkdir(parents=True)
     (mod / "index.md").write_text("# handmade\n")
     result = server.agent(action="update", id="handmade")
     assert result.startswith("Error:")
-    assert ".template.yaml" in result
+    assert ".installed" in result
 
 
 def test_update_missing_id(registry, project):
@@ -392,7 +393,7 @@ def test_cli_update_up_to_date(registry, tmp_path):
     agent = tmp_path / "a"
     _run_cli("init", "a", cwd=tmp_path)
     _run_cli("add", "demo-flow", cwd=agent)
-    _finish_setup(agent / "modules" / "demo-flow")
+    _finish_setup(agent / "agents" / "demo-flow")
     result = _run_cli("update", "demo-flow", cwd=agent)
     assert result.returncode == 0
     assert "up to date" in result.stdout

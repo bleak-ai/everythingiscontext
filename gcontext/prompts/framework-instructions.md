@@ -10,9 +10,9 @@ outside it is reachable.
 Every state file is also an MCP resource at gcontext://<path>, so runtimes
 can attach one directly instead of calling read_file.
 
-How the folder is organized:
+How the folder is organized (three top-level folders):
 
-- connections/<service>/: a service you can use. Its connection.yaml declares
+- connections/<service>/: a service you can reach. Its connection.yaml declares
   the secret NAMEs and Python deps it needs; its index.md explains the API in
   practice. connection.yaml fields: `name` (folder identity), `description`,
   `kind` (one of: ticket-tracker, product-api, keyword-source, browser,
@@ -27,6 +27,14 @@ How the folder is organized:
   provider", not "Stripe"); the agent finds the concrete service in
   connections/ at run time. Company-specific facts learned while working
   (playbooks, logs) are fine; hard-wired service names in the steps are not.
+- agents/<name>/: installed agents from the registry. The agent tool manages
+  this folder (search, install, check, update). Each agent has its own
+  index.md, commands/, and scripts/. Do not create agents/ entries by hand;
+  use the agent tool.
+
+Dependency direction: agents may reference modules and connections, modules
+may reference connections. Never the reverse. A connection never depends on a
+module or agent; a module never depends on an agent.
 - scripts/ folders (inside connections and modules): proven procedures. Run
   them by path with run_script instead of rewriting them, and save a script
   there once it has proven itself.

@@ -10,11 +10,13 @@ import hashlib
 import io
 import json
 import os
+import re
 import ssl
 import tarfile
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 import certifi
@@ -27,7 +29,7 @@ class RegistryError(Exception):
 
 DEFAULT_REGISTRY = "bleak-ai/agents@main"
 DEFAULT_API = "https://api.gcontext.ai"
-MANIFEST_NAME = ".template.yaml"
+MANIFEST_NAME = ".installed"
 
 
 def registry_spec() -> str:
@@ -206,6 +208,31 @@ def validate_bundle(files) -> dict:
                     or not all(isinstance(x, str) for x in val)
                 ):
                     raise ValueError(f"connections[{i}]: '{field}' must be a list of strings")
+
+    shares = meta.get("shares")
+    if shares is not None:
+        if not isinstance(shares, list):
+            raise ValueError("'shares' must be a list of entries with a 'path'")
+        for i, entry in enumerate(shares):
+            if not isinstance(entry, dict):
+                raise ValueError(f"shares[{i}]: must be a mapping with a 'path'")
+            spath = entry.get("path")
+            if not isinstance(spath, str) or not spath:
+                raise ValueError(f"shares[{i}]: missing 'path'")
+            spath_parts = PurePosixPath(spath).parts
+            if spath.startswith("/") or ".." in spath_parts:
+                raise ValueError(f"shares[{i}]: path must not escape the project root")
+            desc = entry.get("description")
+            if desc is not None and not isinstance(desc, str):
+                raise ValueError(f"shares[{i}]: 'description' must be a string")
+
+    configurable = meta.get("configurable")
+    if configurable is not None:
+        if not isinstance(configurable, list) or not all(
+            isinstance(c, str) for c in configurable
+        ):
+            raise ValueError("'configurable' must be a list of strings")
+
     return meta
 
 
@@ -235,6 +262,7 @@ def write_manifest(module_dir: Path, agent_id: str, ref: str, files: list[dict])
         "template": agent_id,
         "registry": registry_name(),
         "installed_ref": ref,
+        "installed_at": datetime.now(timezone.utc).isoformat(),
         "files": {f["path"]: file_hash(f["content"]) for f in sorted(files, key=lambda f: f["path"])},
     }
     (module_dir / MANIFEST_NAME).write_text(yaml.safe_dump(data, sort_keys=False))
@@ -267,27 +295,47 @@ def _ping_download(agent_id: str) -> None:
         pass
 
 
-def _write_module(module_dir: Path, meta: dict, files: list[dict], ref: str):
+def _write_agent(agent_dir: Path, meta: dict, files: list[dict], ref: str):
     for f in files:
-        dest = module_dir / f["path"]
+        dest = agent_dir / f["path"]
         dest.parent.mkdir(parents=True, exist_ok=True)
         content = f["content"]
         if f["path"] == "index.md":
             content = stamp_setup_pending(content)
+            content = _inject_base_path(content, f"agents/{meta['id']}/")
         dest.write_text(content)
 
-    # Hashes cover the unstamped registry content: once setup removes the
-    # `setup: pending` line, the module reads as unmodified again.
-    write_manifest(module_dir, meta["id"], ref, files)
+    # Hashes cover the unstamped, un-injected registry content: once setup
+    # removes the `setup: pending` line and the base-path comment is
+    # stripped for comparison, the agent reads as unmodified again.
+    write_manifest(agent_dir, meta["id"], ref, files)
+
+
+def _inject_base_path(content: str, base_path: str) -> str:
+    """Insert a base-path comment after the closing frontmatter delimiter."""
+    lines = content.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return content
+    for i, ln in enumerate(lines[1:], 1):
+        if ln.strip() == "---":
+            comment = f"<!-- Base path: {base_path} -->"
+            return "\n".join(lines[: i + 1] + [comment] + lines[i + 1 :])
+    return content
+
+
+_BASE_PATH_RE = re.compile(r"^<!-- Base path: .+? -->\n", re.MULTILINE)
+
+
+def _strip_base_path(content: str) -> str:
+    """Remove the injected base-path comment so local hashes match the registry."""
+    return _BASE_PATH_RE.sub("", content)
 
 
 def scaffold_connections(project_dir: Path, meta: dict) -> list[dict]:
-    """Create stub connection folders for the kinds a module declares.
+    """Report which declared connection kinds exist and which are missing.
 
-    For each entry in meta["connections"] whose kind has no existing
-    connection, write connections/<kind>/connection.yaml and
-    connections/<kind>/index.md. Returns one report dict per entry:
-    {"kind": ..., "status": "created" | "exists", "path": ...}.
+    Returns one report dict per entry:
+    {"kind": ..., "status": "exists" | "missing", "path": ...}.
     """
     from . import state
 
@@ -306,30 +354,10 @@ def scaffold_connections(project_dir: Path, meta: dict) -> list[dict]:
             report.append(
                 {"kind": kind, "status": "exists", "path": f"connections/{kind}"}
             )
-            continue
-        conn_dir.mkdir(parents=True, exist_ok=True)
-        manifest = {
-            "name": kind,
-            "description": entry.get("description") or "",
-            "kind": kind,
-            "secrets": entry.get("secrets") or [],
-            "deps": entry.get("deps") or [],
-        }
-        (conn_dir / "connection.yaml").write_text(
-            yaml.safe_dump(manifest, sort_keys=False)
-        )
-        desc = entry.get("description") or ""
-        desc_line = f"{desc}\n" if desc else ""
-        (conn_dir / "index.md").write_text(
-            f"# {kind}\n\n"
-            f"Stub created on install of {meta['id']}. Setup fills this in.\n"
-            f"{desc_line}\n"
-            "- connection.yaml: declared kind, secret names, and Python deps.\n"
-        )
-        existing_kinds.add(kind)
-        report.append(
-            {"kind": kind, "status": "created", "path": f"connections/{kind}"}
-        )
+        else:
+            report.append(
+                {"kind": kind, "status": "missing", "path": f"connections/{kind}"}
+            )
     return report
 
 
@@ -345,16 +373,23 @@ def install_agent(project_dir: Path, source: str) -> dict:
     except ValueError as e:
         raise RegistryError(f"invalid agent bundle: {e}")
 
-    module_dir = project_dir / "modules" / meta["id"]
-    if module_dir.exists():
+    legacy_dir = project_dir / "modules" / meta["id"]
+    if legacy_dir.exists():
         raise RegistryError(
-            f"module '{meta['id']}' already exists at modules/{meta['id']}. "
-            "Installs are snapshots: your copy is personalized and is never overwritten."
+            f"'{meta['id']}' already exists at modules/{meta['id']}. "
+            f"Move it to agents/{meta['id']}/ first, then run add again."
+        )
+
+    agent_dir = project_dir / "agents" / meta["id"]
+    if agent_dir.exists():
+        raise RegistryError(
+            f"agent '{meta['id']}' already exists at agents/{meta['id']}. "
+            "Use 'gcontext update' to refresh it."
         )
 
     # Resolve the declared `agents:` dependencies before writing anything,
-    # so a bad dependency never leaves a half-installed set. An id already
-    # present under modules/ is satisfied; the visited set breaks cycles.
+    # so a bad dependency never leaves a half-installed set. The visited
+    # set breaks cycles.
     to_write = [(meta, files, ref, "")]
     visited = {meta["id"]}
     pending = [(dep_id, meta["id"]) for dep_id in meta.get("agents") or []]
@@ -363,6 +398,8 @@ def install_agent(project_dir: Path, source: str) -> dict:
         if dep_id in visited:
             continue
         visited.add(dep_id)
+        if (project_dir / "agents" / dep_id).exists():
+            continue
         if (project_dir / "modules" / dep_id).exists():
             continue
         dep_files, dep_ref = fetch_agent_by_id(dep_id)
@@ -373,14 +410,23 @@ def install_agent(project_dir: Path, source: str) -> dict:
         pending.extend((d, dep_id) for d in dep_meta.get("agents") or [])
         to_write.append((dep_meta, dep_files, dep_ref, required_by))
 
+    agents_dir = project_dir / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+
     dependencies = []
     for m, fl, r, required_by in to_write:
-        _write_module(project_dir / "modules" / m["id"], m, fl, r)
+        _write_agent(project_dir / "agents" / m["id"], m, fl, r)
         if required_by:
             dependencies.append({
                 "id": m["id"], "name": m["name"], "count": len(fl),
-                "path": f"modules/{m['id']}", "required_by": required_by,
+                "path": f"agents/{m['id']}", "required_by": required_by,
             })
+
+    # Create shared folders declared in `shares`
+    for m, fl, r, required_by in to_write:
+        for share in m.get("shares") or []:
+            share_dir = project_dir / share["path"]
+            share_dir.mkdir(parents=True, exist_ok=True)
 
     connections_report = []
     for m, fl, r, required_by in to_write:
@@ -393,7 +439,7 @@ def install_agent(project_dir: Path, source: str) -> dict:
 
     return {
         "id": meta["id"], "name": meta["name"], "count": len(files),
-        "path": f"modules/{meta['id']}", "dependencies": dependencies,
+        "path": f"agents/{meta['id']}", "dependencies": dependencies,
         "connections": connections_report,
     }
 
@@ -431,7 +477,9 @@ def search_catalog(query: str = "") -> list[dict]:
 # --- Check and update ---
 
 def check_agent(project_dir: Path, module_name: str, upstream: dict | None = None) -> dict:
-    module_dir = project_dir / "modules" / module_name
+    module_dir = project_dir / "agents" / module_name
+    if not (module_dir / MANIFEST_NAME).exists():
+        module_dir = project_dir / "modules" / module_name
     manifest = read_manifest(module_dir)
     if manifest is None:
         return {"id": module_name, "status": "untracked"}
@@ -457,9 +505,10 @@ def check_agent(project_dir: Path, module_name: str, upstream: dict | None = Non
 
         local_file = module_dir / path
         try:
-            local_content = local_file.read_text() if local_file.exists() else None
+            raw = local_file.read_text() if local_file.exists() else None
         except (OSError, UnicodeDecodeError):
-            local_content = None
+            raw = None
+        local_content = _strip_base_path(raw) if raw is not None else None
         local_h = file_hash(local_content) if local_content is not None else None
 
         if base is None:
@@ -498,18 +547,20 @@ def check_agent(project_dir: Path, module_name: str, upstream: dict | None = Non
 
 
 def check_all(project_dir: Path) -> list[dict]:
-    modules_dir = project_dir / "modules"
-    if not modules_dir.is_dir():
-        return []
-
     tracked = {}
-    for d in sorted(modules_dir.iterdir()):
-        if not d.is_dir():
+    for parent in ("agents", "modules"):
+        scan_dir = project_dir / parent
+        if not scan_dir.is_dir():
             continue
-        manifest = read_manifest(d)
-        if manifest is None:
-            continue
-        tracked[d.name] = manifest.get("template", d.name)
+        for d in sorted(scan_dir.iterdir()):
+            if not d.is_dir():
+                continue
+            if d.name in tracked:
+                continue
+            manifest = read_manifest(d)
+            if manifest is None:
+                continue
+            tracked[d.name] = manifest.get("template", d.name)
 
     if not tracked:
         return []
@@ -537,11 +588,13 @@ def check_all(project_dir: Path) -> list[dict]:
 
 
 def update_agent(project_dir: Path, module_name: str) -> dict:
-    module_dir = project_dir / "modules" / module_name
+    module_dir = project_dir / "agents" / module_name
+    if not (module_dir / MANIFEST_NAME).exists():
+        module_dir = project_dir / "modules" / module_name
     manifest = read_manifest(module_dir)
     if manifest is None:
         raise RegistryError(
-            f"modules/{module_name} has no {MANIFEST_NAME}; "
+            f"{module_name} has no {MANIFEST_NAME}; "
             "it was not installed from the registry"
         )
 
@@ -551,50 +604,89 @@ def update_agent(project_dir: Path, module_name: str) -> dict:
     base_hashes = dict(manifest.get("files", {}))
     new_hashes = dict(base_hashes)
 
+    # Parse ownership from the agent's index.md frontmatter
+    from .commands import parse_command
+
+    index_file = module_dir / "index.md"
+    learns_dirs = set()
+    configurable_files = set()
+    if index_file.exists():
+        try:
+            agent_meta, _ = parse_command(index_file.read_text())
+            for ld in agent_meta.get("learns") or []:
+                learns_dirs.add(ld.rstrip("/") + "/")
+            for cf in agent_meta.get("configurable") or []:
+                configurable_files.add(cf)
+        except (ValueError, OSError):
+            pass
+
+    # Check if any runs exist (skip runs/example/ on update)
+    runs_dir = module_dir / "runs"
+    has_runs = runs_dir.is_dir() and any(
+        d.name != "example" for d in runs_dir.iterdir() if d.is_dir()
+    )
+
     all_paths = set(base_hashes) | set(upstream_map)
 
     report = {
         "id": module_name,
         "ref": ref,
-        "updated": [],
-        "kept_local": [],
-        "conflicts": [],
+        "replaced": [],
+        "backed_up": [],
+        "skipped": [],
         "added": [],
         "deleted": [],
-        "kept_deleted_upstream": [],
         "commands_changed": False,
     }
 
     for path in sorted(all_paths):
+        # Classify ownership
+        is_instance_owned = any(path.startswith(ld) for ld in learns_dirs)
+        is_configurable = path in configurable_files
+        is_example_run = path.startswith("runs/example/")
+
+        if is_instance_owned:
+            report["skipped"].append(path)
+            new_hashes[path] = base_hashes.get(path, file_hash(""))
+            continue
+
+        if is_example_run and has_runs:
+            report["skipped"].append(path)
+            new_hashes[path] = base_hashes.get(path, file_hash(""))
+            continue
+
         base = base_hashes.get(path)
         upstream_content = upstream_map.get(path)
         upstream_h = file_hash(upstream_content) if upstream_content is not None else None
 
         local_file = module_dir / path
         try:
-            local_content = local_file.read_text() if local_file.exists() else None
+            raw = local_file.read_text() if local_file.exists() else None
         except (OSError, UnicodeDecodeError):
-            local_content = None
+            raw = None
+        local_content = _strip_base_path(raw) if raw is not None else None
         local_h = file_hash(local_content) if local_content is not None else None
 
+        # New file from upstream
         if base is None:
             if upstream_h is not None and local_h is None:
                 dest = module_dir / path
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_text(upstream_content)
+                content = upstream_content
+                if path == "index.md":
+                    content = _inject_base_path(content, f"agents/{module_name}/")
+                dest.write_text(content)
                 new_hashes[path] = upstream_h
                 report["added"].append(path)
             elif upstream_h is not None and local_h is not None:
-                if upstream_h == local_h:
+                if upstream_h != local_h:
                     new_hashes[path] = upstream_h
+                    report["skipped"].append(path)
                 else:
-                    new_path = module_dir / (path + ".new")
-                    new_path.parent.mkdir(parents=True, exist_ok=True)
-                    new_path.write_text(upstream_content)
                     new_hashes[path] = upstream_h
-                    report["conflicts"].append(path)
             continue
 
+        # Deleted upstream
         if upstream_h is None:
             if local_h == base:
                 if local_file.exists():
@@ -603,44 +695,71 @@ def update_agent(project_dir: Path, module_name: str) -> dict:
                 report["deleted"].append(path)
             elif local_h is not None:
                 new_hashes.pop(path, None)
-                report["kept_deleted_upstream"].append(path)
+                report["skipped"].append(path)
             else:
                 new_hashes.pop(path, None)
             continue
 
         if local_h is None:
-            report["kept_local"].append(path + " (deleted locally)")
+            report["skipped"].append(path + " (deleted locally)")
             continue
 
         if local_h == upstream_h:
             new_hashes[path] = upstream_h
             continue
 
+        # Configurable: back up if user edited, replace if untouched
+        if is_configurable:
+            if local_h != base:
+                backup_path = _backup_name(module_dir, path)
+                backup_path.parent.mkdir(parents=True, exist_ok=True)
+                backup_path.write_text(raw)
+                local_file.write_text(upstream_content)
+                new_hashes[path] = upstream_h
+                report["backed_up"].append(path)
+            else:
+                local_file.write_text(upstream_content)
+                new_hashes[path] = upstream_h
+                report["replaced"].append(path)
+            continue
+
+        # Registry-owned: replace if unchanged, skip if locally modified
         if local_h == base and upstream_h != base:
+            content = upstream_content
+            if path == "index.md":
+                content = _inject_base_path(content, f"agents/{module_name}/")
+            local_file.write_text(content)
+            new_hashes[path] = upstream_h
+            report["replaced"].append(path)
+        elif local_h != base and upstream_h == base:
+            report["skipped"].append(path)
+        elif local_h != base and upstream_h != base:
+            backup_path = _backup_name(module_dir, path)
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            backup_path.write_text(raw)
             local_file.write_text(upstream_content)
             new_hashes[path] = upstream_h
-            report["updated"].append(path)
-        elif local_h != base and upstream_h == base:
-            report["kept_local"].append(path)
-        elif local_h != base and upstream_h != base:
-            new_path = module_dir / (path + ".new")
-            new_path.parent.mkdir(parents=True, exist_ok=True)
-            new_path.write_text(upstream_content)
-            new_hashes[path] = upstream_h
-            report["conflicts"].append(path)
+            report["backed_up"].append(path)
 
-    commands_paths = report["updated"] + report["added"] + report["conflicts"] + report["deleted"]
+    commands_paths = report["replaced"] + report["added"] + report["deleted"]
     report["commands_changed"] = any(p.startswith("commands/") for p in commands_paths)
 
     manifest_data = {
         "template": template_id,
         "registry": manifest.get("registry", registry_name()),
         "installed_ref": ref,
+        "installed_at": datetime.now(timezone.utc).isoformat(),
         "files": dict(sorted(new_hashes.items())),
     }
     (module_dir / MANIFEST_NAME).write_text(yaml.safe_dump(manifest_data, sort_keys=False))
 
     return report
+
+
+def _backup_name(base_dir: Path, path: str) -> Path:
+    """Return the .pre-update backup path for a file."""
+    p = Path(path)
+    return base_dir / (str(p.with_suffix("")) + ".pre-update" + p.suffix)
 
 
 # --- Report formatting (shared by CLI and server tool) ---
@@ -670,34 +789,30 @@ def format_check_report(report: dict) -> str:
 def format_update_report(report: dict) -> str:
     lines = []
 
-    if not any(report.get(k) for k in ("updated", "added", "deleted", "conflicts", "kept_local", "kept_deleted_upstream")):
+    if not any(report.get(k) for k in ("replaced", "added", "deleted", "backed_up", "skipped")):
         lines.append(f"{report['id']}: up to date")
     else:
         lines.append(f"{report['id']}: updated")
 
-    if report.get("updated"):
-        lines.append("Updated:")
-        for p in report["updated"]:
+    if report.get("replaced"):
+        lines.append("Files replaced (registry-owned):")
+        for p in report["replaced"]:
+            lines.append(f"  {p}")
+    if report.get("backed_up"):
+        lines.append("Files backed up (configurable, locally modified):")
+        for p in report["backed_up"]:
+            lines.append(f"  {p}")
+    if report.get("skipped"):
+        lines.append("Files skipped (instance-owned):")
+        for p in report["skipped"]:
             lines.append(f"  {p}")
     if report.get("added"):
-        lines.append("Added:")
+        lines.append("New files added:")
         for p in report["added"]:
             lines.append(f"  {p}")
     if report.get("deleted"):
-        lines.append("Deleted:")
+        lines.append("Files removed:")
         for p in report["deleted"]:
-            lines.append(f"  {p}")
-    if report.get("conflicts"):
-        lines.append("Conflicts (merge <file>.new into <file>, then delete the .new file):")
-        for p in report["conflicts"]:
-            lines.append(f"  {p}")
-    if report.get("kept_local"):
-        lines.append("Kept local changes:")
-        for p in report["kept_local"]:
-            lines.append(f"  {p}")
-    if report.get("kept_deleted_upstream"):
-        lines.append("Kept (upstream deleted, you modified):")
-        for p in report["kept_deleted_upstream"]:
             lines.append(f"  {p}")
 
     lines.append(f"Manifest updated to ref {report.get('ref', 'unknown')}.")

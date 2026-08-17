@@ -97,10 +97,11 @@ The server prints a URL and the one-line command to connect your client
 this folder is the memory.
 
 What's here: `agent.md` is the agent's definition, pushed to every client at
-connect. `connections/` holds the services it can use, `modules/` its knowledge
-by topic, `archive/` retired state. `secrets.env` holds secret values; it is
-gitignored and never leaves this machine, so after cloning, recreate it from
-the NAMEs each connection.yaml declares.
+connect. `connections/` holds the services it can use, `agents/` the autonomous
+actors installed from the registry, `modules/` accumulated knowledge by topic,
+`archive/` retired state. `secrets.env` holds secret values; it is gitignored
+and never leaves this machine, so after cloning, recreate it from the NAMEs
+each connection.yaml declares.
 """
 
 def cmd_init(args):
@@ -119,6 +120,7 @@ def cmd_init(args):
         ".gitignore": INIT_AGENT_GITIGNORE,
         "connections/.gitkeep": "",
         "modules/.gitkeep": "",
+        "agents/.gitkeep": "",
         "archive/.gitkeep": "",
     }
     for rel, content in files.items():
@@ -246,6 +248,7 @@ def cmd_up(args):
     exec_mod.ensure_venv(project_dir)
     n_framework_prompts = server.register_framework_prompts()
     n_commands = server.register_commands()
+    n_disabled = len(commands_mod._DISABLED)
     n_base_lines, n_instruction_lines = server.load_instructions()
     server.snapshot_startup_files()
 
@@ -275,6 +278,8 @@ def cmd_up(args):
     prompt_bits = [f"{n_framework_prompts} built-in ({builtin_names})"]
     if n_commands:
         prompt_bits.append(f"{n_commands} project command(s)")
+    if n_disabled:
+        prompt_bits.append(f"{n_disabled} disabled in commands.yaml")
     print(f"Prompts: {' + '.join(prompt_bits)} as MCP prompts (slash commands in Claude Code).")
     print()
     print("Connections appear below as clients attach. Ctrl+C stops the server,")
@@ -296,6 +301,7 @@ def cmd_status(args):
     connections = state.load_connections(project_dir)
     secrets = secrets_mod.load(project_dir)
     modules = state.discover_modules(project_dir)
+    agents = state.discover_agents(project_dir)
     port = resolve_port(args, project_dir)
 
     name = config.get("name", project_dir.name)
@@ -351,6 +357,13 @@ def cmd_status(args):
         for mname, mod in modules.items():
             suffix = f" {DIM}- {mod.description}{RESET}" if mod.description else ""
             print(f"  {mname}{suffix}")
+        print()
+
+    if agents:
+        print("Agents:")
+        for aname, agent in agents.items():
+            suffix = f" {DIM}- {agent.description}{RESET}" if agent.description else ""
+            print(f"  {aname}{suffix}")
         print()
 
     archived_line = state.archived_line(project_dir)
@@ -463,8 +476,8 @@ def cmd_add(args):
             f"({dep['count']} files) at {dep['path']}/ (required by {dep['required_by']})"
         )
     for conn in result.get("connections", []):
-        if conn["status"] == "created":
-            line = report_strings.CONNECTION_STUB_CREATED_LINE.format(kind=conn["kind"])
+        if conn["status"] == "missing":
+            line = report_strings.CONNECTION_MISSING_LINE.format(kind=conn["kind"])
         else:
             line = report_strings.CONNECTION_EXISTS_LINE.format(kind=conn["kind"])
         print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {line}")
@@ -477,6 +490,92 @@ def cmd_add(args):
     if (project_dir / rel / "commands" / "setup.md").exists():
         setup_cmd = commands_mod.installed_setup_prompt(server_name, result["id"])
         print(f"  4. Run the setup: {setup_cmd}")
+
+
+def cmd_remove(args):
+    project_dir = find_project_dir(args.project)
+    agent_id = args.id
+    from .commands import parse_command
+
+    agent_dir = project_dir / "agents" / agent_id
+    if not agent_dir.is_dir():
+        agent_dir = project_dir / "modules" / agent_id
+        if not agent_dir.is_dir():
+            print(f"Error: agent '{agent_id}' not found in agents/ or modules/.", file=sys.stderr)
+            sys.exit(1)
+
+    manifest = registry_mod.read_manifest(agent_dir)
+    if manifest is None:
+        print(f"Error: {agent_dir / registry_mod.MANIFEST_NAME} not found. Cannot determine installed files.", file=sys.stderr)
+        sys.exit(1)
+
+    index_path = agent_dir / "index.md"
+    learns = []
+    configurable = []
+    if index_path.exists():
+        try:
+            meta, _ = parse_command(index_path.read_text(encoding="utf-8"))
+            learns = meta.get("learns") or []
+            if isinstance(learns, str):
+                learns = [learns]
+            configurable = meta.get("configurable") or []
+            if isinstance(configurable, str):
+                configurable = [configurable]
+        except (ValueError, OSError):
+            pass
+
+    print(f"Agent: {agent_id}")
+    print(f"Location: {agent_dir.relative_to(project_dir)}/")
+
+    if learns or configurable:
+        print()
+        if learns:
+            print(f"Instance-owned folders: {', '.join(learns)}")
+        if configurable:
+            print(f"Configurable files: {', '.join(configurable)}")
+        print()
+        answer = input("Keep instance-owned files (runs, learned data)? [y/N] ").strip().lower()
+        keep = answer in ("y", "yes")
+    else:
+        keep = False
+
+    if keep:
+        archive_dir = project_dir / "archive" / "agents" / agent_id
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        moved = []
+        for folder_name in learns:
+            src = agent_dir / folder_name
+            if src.exists():
+                dest = archive_dir / folder_name
+                if dest.exists():
+                    shutil.rmtree(dest)
+                shutil.move(str(src), str(dest))
+                moved.append(folder_name)
+        manifest_hashes = manifest.get("files") or {}
+        for conf_file in configurable:
+            src = agent_dir / conf_file
+            if not src.exists():
+                continue
+            local_hash = registry_mod.file_hash(src.read_text(encoding="utf-8"))
+            installed_hash = manifest_hashes.get(conf_file)
+            if installed_hash and local_hash != installed_hash:
+                dest = archive_dir / conf_file
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(src), str(dest))
+                moved.append(conf_file)
+
+        shutil.rmtree(agent_dir)
+        print()
+        if moved:
+            print(f"Archived to {archive_dir.relative_to(project_dir)}/: {', '.join(moved)}")
+        print(f"Removed {agent_id}.")
+    else:
+        shutil.rmtree(agent_dir)
+        print(f"Removed {agent_id}.")
+
+    print()
+    print(f"Commands from {agent_id} are gone after a server restart.")
+    print(RESTART_RULE)
 
 
 def validate_template(folder: Path) -> dict:
@@ -561,6 +660,29 @@ def validate_template(folder: Path) -> dict:
                         continue
                     seen.add(current)
                     stack.extend(by_id.get(current, {}).get("agents") or [])
+
+    configurable = meta.get("configurable")
+    if configurable is not None:
+        if not isinstance(configurable, list) or not all(isinstance(c, str) for c in configurable):
+            print("Error: 'configurable' must be a list of file path strings.", file=sys.stderr)
+            sys.exit(1)
+        for c in configurable:
+            if not (folder / c).exists():
+                print(f"Error: configurable file '{c}' does not exist in the folder.", file=sys.stderr)
+                sys.exit(1)
+
+    shares = meta.get("shares")
+    if shares is not None:
+        if not isinstance(shares, list):
+            print("Error: 'shares' must be a list of entries with a 'path'.", file=sys.stderr)
+            sys.exit(1)
+        for entry in shares:
+            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+                print("Error: every shares entry needs a 'path' string.", file=sys.stderr)
+                sys.exit(1)
+            if "description" in entry and not isinstance(entry["description"], str):
+                print("Error: shares entry 'description' must be a string.", file=sys.stderr)
+                sys.exit(1)
 
     flow = meta.get("flow")
     if not isinstance(flow, list) or not flow or not all(isinstance(s, str) and s.strip() for s in flow):
@@ -665,12 +787,12 @@ def cmd_share(args):
     files = bundle_files(folder)
     agent_id = meta["id"]
 
-    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} validated {agent_id} ({len(files)} files)")
+    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} validated agent {agent_id} ({len(files)} files)")
     print()
     print("To publish this agent, open a PR against the registry:")
     print("  https://github.com/bleak-ai/agents")
     print()
-    print(f"Add the folder as {agent_id}/ at the repository root, then open a pull request.")
+    print(f"Add the agent folder as {agent_id}/ at the repository root, then open a pull request.")
 
     if shutil.which("gh"):
         print()
@@ -693,9 +815,9 @@ def cmd_update(args):
         sys.exit(1)
 
     print(registry_mod.format_update_report(report))
-    if report.get("conflicts"):
+    if report.get("backed_up"):
         print()
-        print("Resolve each conflict: merge <file>.new into <file>, then delete the .new file.")
+        print("Backed-up files saved as <name>.pre-update. Review and merge your changes.")
     if report.get("commands_changed"):
         print()
         print("Commands changed: restart the server to re-register them (stop, gcontext up, reconnect the client).")
@@ -755,15 +877,19 @@ def main():
     context_parser = subparsers.add_parser("context", help="Show the context ledger: every pipe into the agent, per mode")
     add_common(context_parser)
 
-    add_parser = subparsers.add_parser("add", help="Install an agent from the GitHub registry into modules/")
+    add_parser = subparsers.add_parser("add", help="Install an agent from the GitHub registry into agents/")
     add_parser.add_argument("source", help="Agent id (e.g. browser-recipes) or GitHub URL (e.g. https://github.com/owner/repo/tree/main/path)")
     add_parser.add_argument("project", nargs="?", help="Path to gcontext project directory")
 
     share_parser = subparsers.add_parser("share", help="Validate an agent template and show how to submit it via PR")
     share_parser.add_argument("module_path", help="Path to the template folder")
 
+    remove_parser = subparsers.add_parser("remove", help="Uninstall an agent and optionally archive its data")
+    remove_parser.add_argument("id", help="Agent id (the agents/ folder name)")
+    remove_parser.add_argument("project", nargs="?", help="Path to gcontext project directory")
+
     update_parser = subparsers.add_parser("update", help="Update an installed agent from the registry")
-    update_parser.add_argument("id", help="Agent id (the modules/ folder name)")
+    update_parser.add_argument("id", help="Agent id (the agents/ folder name)")
     update_parser.add_argument("project", nargs="?", help="Path to gcontext project directory")
 
     search_parser = subparsers.add_parser("search", help="Search the agent registry")
@@ -778,6 +904,7 @@ def main():
         "connect": cmd_connect,
         "context": cmd_context,
         "add": cmd_add,
+        "remove": cmd_remove,
         "share": cmd_share,
         "update": cmd_update,
         "search": cmd_search,

@@ -78,6 +78,7 @@ def snapshot_startup_files():
     STARTUP_SNAPSHOT["commands"] = {
         str(p): _mtime(p) for p in commands_mod.discover(PROJECT_DIR)
     }
+    STARTUP_SNAPSHOT["manifest"] = _mtime(PROJECT_DIR / "commands.yaml")
     _STALE.update(agent_md=False, commands=False)
     _STALE_WARNED.update(agent_md=False, commands=False)
 
@@ -98,6 +99,10 @@ def check_staleness(force: bool = False) -> dict:
     if not _STALE["commands"]:
         current = {str(p): _mtime(p) for p in commands_mod.discover(PROJECT_DIR)}
         _STALE["commands"] = current != STARTUP_SNAPSHOT["commands"]
+    if not _STALE["commands"]:
+        manifest_changed = _mtime(PROJECT_DIR / "commands.yaml") != STARTUP_SNAPSHOT.get("manifest")
+        if manifest_changed:
+            _STALE["commands"] = True
     if _STALE["agent_md"] and not _STALE_WARNED["agent_md"]:
         _STALE_WARNED["agent_md"] = True
         print("  ! agent.md changed since start; restart to push the new version "
@@ -288,6 +293,7 @@ async def status_route(request: Request) -> JSONResponse:
 
 def register_commands() -> int:
     """Register command files as MCP prompts. Call once, after PROJECT_DIR is set."""
+    commands_mod.load_manifest(PROJECT_DIR)
     return commands_mod.register_commands(mcp, PROJECT_DIR)
 
 
@@ -452,8 +458,8 @@ def run_adhoc_script(
 
 
 
-def _register_module_commands(module_id: str):
-    commands_mod.register_module_commands(mcp, PROJECT_DIR, module_id)
+def _register_agent_commands(agent_id: str):
+    commands_mod.register_agent_commands(mcp, PROJECT_DIR, agent_id)
 
 
 def _notify_prompts_changed():
@@ -497,18 +503,18 @@ def agent(action: str, id: str = "", query: str = "") -> str:
             result = registry_mod.install_agent(PROJECT_DIR, id)
         except (registry_mod.RegistryError, ValueError) as e:
             return f"Error: {e}."
-        _register_module_commands(result["id"])
+        _register_agent_commands(result["id"])
         for dep in result.get("dependencies", []):
-            _register_module_commands(dep["id"])
+            _register_agent_commands(dep["id"])
         _notify_prompts_changed()
         snapshot_startup_files()
         lines = [f"Installed {result['name']} ({result['count']} files) at {result['path']}/."]
         for dep in result.get("dependencies", []):
             lines.append(report_strings.INSTALLED_DEPENDENCY_LINE.format(**dep))
         for conn in result.get("connections", []):
-            if conn["status"] == "created":
+            if conn["status"] == "missing":
                 lines.append(
-                    report_strings.CONNECTION_STUB_CREATED_LINE.format(kind=conn["kind"])
+                    report_strings.CONNECTION_MISSING_LINE.format(kind=conn["kind"])
                 )
             else:
                 lines.append(
@@ -520,9 +526,10 @@ def agent(action: str, id: str = "", query: str = "") -> str:
     elif action == "check":
         try:
             if id:
-                module_dir = PROJECT_DIR / "modules" / id
-                if not module_dir.is_dir():
-                    return f"Error: modules/{id} does not exist."
+                agent_dir = PROJECT_DIR / "agents" / id
+                legacy_dir = PROJECT_DIR / "modules" / id
+                if not agent_dir.is_dir() and not legacy_dir.is_dir():
+                    return f"Error: agents/{id} does not exist."
                 reports = [registry_mod.check_agent(PROJECT_DIR, id)]
             else:
                 reports = registry_mod.check_all(PROJECT_DIR)
@@ -540,7 +547,7 @@ def agent(action: str, id: str = "", query: str = "") -> str:
         except (registry_mod.RegistryError, ValueError) as e:
             return f"Error: {e}."
         if report.get("commands_changed"):
-            _register_module_commands(report["id"])
+            _register_agent_commands(report["id"])
             _notify_prompts_changed()
             snapshot_startup_files()
         return registry_mod.format_update_report(report)

@@ -96,38 +96,22 @@ def test_scaffold_no_connections_is_noop(tmp_path):
     assert not (tmp_path / "connections").exists()
 
 
-def test_scaffold_creates_stub(tmp_path):
+def test_scaffold_reports_missing(tmp_path):
     report = registry_mod.scaffold_connections(tmp_path, BROWSER_META)
     assert report == [
-        {"kind": "browser", "status": "created", "path": "connections/browser"}
+        {"kind": "browser", "status": "missing", "path": "connections/browser"}
     ]
-    manifest = yaml.safe_load(
-        (tmp_path / "connections" / "browser" / "connection.yaml").read_text()
-    )
-    assert manifest == {
-        "name": "browser",
-        "description": "A browser over CDP.",
-        "kind": "browser",
-        "secrets": ["BROWSER_TOKEN"],
-        "deps": ["playwright"],
-    }
-    index = (tmp_path / "connections" / "browser" / "index.md").read_text()
-    assert index.startswith("# browser\n")
-    assert "Stub created on install of demo-flow." in index
-    assert "connection.yaml:" in index
+    # No files are written to disk.
+    assert not (tmp_path / "connections" / "browser").exists()
 
 
-def test_scaffold_defaults_empty_fields(tmp_path):
+def test_scaffold_missing_defaults(tmp_path):
     report = registry_mod.scaffold_connections(
         tmp_path, {"id": "x", "connections": [{"kind": "browser"}]}
     )
-    assert report[0]["status"] == "created"
-    manifest = yaml.safe_load(
-        (tmp_path / "connections" / "browser" / "connection.yaml").read_text()
-    )
-    assert manifest["description"] == ""
-    assert manifest["secrets"] == []
-    assert manifest["deps"] == []
+    assert report[0]["status"] == "missing"
+    # No folder created on disk.
+    assert not (tmp_path / "connections" / "browser").exists()
 
 
 def test_scaffold_skips_existing_kind_under_other_name(tmp_path):
@@ -149,13 +133,13 @@ def test_scaffold_never_touches_existing_folder(tmp_path):
     assert (conn / "notes.md").read_text() == "mine\n"
 
 
-def test_scaffold_same_kind_twice_second_reports_exists(tmp_path):
+def test_scaffold_same_kind_twice_both_report_missing(tmp_path):
     first = registry_mod.scaffold_connections(tmp_path, BROWSER_META)
     second = registry_mod.scaffold_connections(
         tmp_path, {"id": "other", "connections": [{"kind": "browser"}]}
     )
-    assert first[0]["status"] == "created"
-    assert second[0]["status"] == "exists"
+    assert first[0]["status"] == "missing"
+    assert second[0]["status"] == "missing"
 
 
 # --- install_agent integration (registry over local HTTP, as in test_agent_tool.py) ---
@@ -230,18 +214,14 @@ def project(tmp_path, monkeypatch):
     return p
 
 
-def test_install_scaffolds_declared_connection(registry, project):
+def test_install_reports_missing_connection(registry, project):
     registry[0] = _build_tarball(
         [{"path": "demo-flow/index.md", "content": INDEX_WITH_CONNECTION}]
     )
     result = server.agent(action="install", id="demo-flow")
-    assert "Created connection stub connections/browser/" in result
-    manifest = yaml.safe_load(
-        (project / "connections" / "browser" / "connection.yaml").read_text()
-    )
-    assert manifest["kind"] == "browser"
-    assert manifest["deps"] == ["playwright"]
-    assert (project / "connections" / "browser" / "index.md").exists()
+    assert "missing" in result.lower() or "browser" in result.lower()
+    # No stub folder created on disk.
+    assert not (project / "connections" / "browser" / "connection.yaml").exists()
 
 
 def test_install_reports_existing_connection(registry, project):
@@ -253,7 +233,7 @@ def test_install_reports_existing_connection(registry, project):
         [{"path": "demo-flow/index.md", "content": INDEX_WITH_CONNECTION}]
     )
     result = server.agent(action="install", id="demo-flow")
-    assert "Connection browser already exists; the module uses it." in result
+    assert "Connection browser already exists; the agent uses it." in result
     assert (conn / "connection.yaml").read_text() == original
 
 

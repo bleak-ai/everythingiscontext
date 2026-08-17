@@ -85,7 +85,7 @@ def project(tmp_path, monkeypatch):
     p = tmp_path / "agent"
     p.mkdir()
     (p / "gcontext.yaml").write_text("name: test-agent\n")
-    (p / "modules").mkdir()
+    (p / "agents").mkdir()
     (p / "connections").mkdir()
     monkeypatch.setattr(server, "PROJECT_DIR", p)
     return p
@@ -108,9 +108,9 @@ def test_install_pulls_missing_dependency(registry, project):
         _bundle("dep-flow", "Dep Flow"),
     )
     result = server.agent(action="install", id="parent-flow")
-    assert (project / "modules" / "parent-flow" / "index.md").exists()
-    assert (project / "modules" / "dep-flow" / "index.md").exists()
-    assert (project / "modules" / "dep-flow" / registry_mod.MANIFEST_NAME).exists()
+    assert (project / "agents" / "parent-flow" / "index.md").exists()
+    assert (project / "agents" / "dep-flow" / "index.md").exists()
+    assert (project / "agents" / "dep-flow" / registry_mod.MANIFEST_NAME).exists()
     assert "Installed Parent Flow" in result
     assert "Installed Dep Flow" in result
     assert "(required by parent-flow)" in result
@@ -137,8 +137,8 @@ def test_install_cycle_installs_each_once(registry, project):
         _bundle("b-flow", "B Flow", agents=["a-flow"]),
     )
     result = server.agent(action="install", id="a-flow")
-    assert (project / "modules" / "a-flow" / "index.md").exists()
-    assert (project / "modules" / "b-flow" / "index.md").exists()
+    assert (project / "agents" / "a-flow" / "index.md").exists()
+    assert (project / "agents" / "b-flow" / "index.md").exists()
     assert "Installed A Flow" in result
     assert "Installed B Flow" in result
 
@@ -152,7 +152,7 @@ def test_install_missing_dependency_fails_clean(registry, project):
     result = server.agent(action="install", id="parent-flow")
     assert result.startswith("Error:")
     assert "ghost-flow" in result
-    assert not (project / "modules" / "parent-flow").exists()
+    assert not (project / "agents" / "parent-flow").exists()
 
 
 def test_install_bad_agents_field_rejected(registry, project):
@@ -186,7 +186,6 @@ def test_add_banner_lists_dependency(registry, tmp_path):
     proj = tmp_path / "proj"
     proj.mkdir()
     (proj / "gcontext.yaml").write_text("name: proj\n")
-    (proj / "modules").mkdir()
     (proj / "connections").mkdir()
     env = dict(os.environ, GCONTEXT_REGISTRY=url)
     result = run_cli("add", "parent-flow", cwd=proj, env=env)
@@ -194,7 +193,7 @@ def test_add_banner_lists_dependency(registry, tmp_path):
     assert "Parent Flow" in result.stdout
     assert "Dep Flow" in result.stdout
     assert "(required by parent-flow)" in result.stdout
-    assert (proj / "modules" / "dep-flow" / "index.md").exists()
+    assert (proj / "agents" / "dep-flow" / "index.md").exists()
 
 
 # --- Share validator ---
@@ -272,7 +271,7 @@ def test_share_agents_known_id_passes(registry, tmp_path):
     env = dict(os.environ, GCONTEXT_REGISTRY=url)
     result = run_cli("share", str(t), cwd=tmp_path, env=env)
     assert result.returncode == 0, result.stderr
-    assert "validated test-flow" in result.stdout
+    assert "validated agent test-flow" in result.stdout
 
 
 def test_share_agents_offline_warns_and_passes(tmp_path):

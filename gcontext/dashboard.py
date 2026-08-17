@@ -92,8 +92,23 @@ async def api_modules(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
-def _command_entry(path: Path, name: str, owner: str, rel: str, kind: str) -> dict:
-    entry = {"owner": owner, "name": name, "kind": kind, "path": rel}
+@mcp.custom_route("/api/agents", methods=["GET"])
+async def api_agents(request: Request) -> JSONResponse:
+    root = _root()
+    result = []
+    for aname, agent in state.discover_agents(root).items():
+        result.append({
+            "name": aname,
+            "display_name": agent.name,
+            "description": agent.description,
+            "tags": agent.tags,
+            "files": state.agent_files(root, aname),
+        })
+    return JSONResponse(result)
+
+
+def _command_entry(path: Path, name: str, owner: str, rel: str, kind: str, key: str = "", disabled: bool = False) -> dict:
+    entry = {"owner": owner, "name": name, "kind": kind, "path": rel, "key": key, "disabled": disabled}
     try:
         text = path.read_text(encoding="utf-8")
         if path.suffix == ".md":
@@ -131,19 +146,35 @@ async def api_commands(request: Request) -> JSONResponse:
         rel = str(path.relative_to(root))
         owner = path.parent.parent.name
         name = path_to_name.get(str(path), commands_mod._short_name(path.stem))
-        result.append(_command_entry(path, name, owner, rel, path.suffix.lstrip(".")))
+        key = commands_mod._STABLE_KEYS.get(name, commands_mod._stable_key(path, root))
+        result.append(_command_entry(path, name, owner, rel, path.suffix.lstrip("."), key=key))
     # Template-generated entries from GENERATED.
     for tpl_path_str, info in commands_mod.GENERATED.items():
         tpl_path = Path(tpl_path_str)
         owner = Path(info["owner_dir"]).name
         for gen_name in sorted(info["names"]):
             rel = str(tpl_path.relative_to(root)) if tpl_path.is_relative_to(root) else tpl_path_str
-            result.append(_command_entry(tpl_path, gen_name, owner, rel, "md"))
+            key = commands_mod._STABLE_KEYS.get(gen_name, "")
+            result.append(_command_entry(tpl_path, gen_name, owner, rel, "md", key=key))
     # Framework prompts.
     for path in commands_mod.discover_framework_prompts():
+        key = f"framework/{path.stem}"
         result.append(_command_entry(
-            path, path.stem, "framework", f"gcontext/prompts/{path.name}", "md"
+            path, path.stem, "framework", f"gcontext/prompts/{path.name}", "md", key=key
         ))
+    for disabled_key in sorted(commands_mod._DISABLED):
+        parts = disabled_key.split("/", 1)
+        d_owner = parts[0] if len(parts) > 1 else ""
+        d_stem = parts[1] if len(parts) > 1 else parts[0]
+        result.append({
+            "owner": d_owner,
+            "name": d_stem,
+            "kind": "",
+            "path": "",
+            "key": disabled_key,
+            "disabled": True,
+            "description": "",
+        })
     return JSONResponse(result)
 
 
