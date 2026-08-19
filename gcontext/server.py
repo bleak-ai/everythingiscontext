@@ -78,7 +78,7 @@ def snapshot_startup_files():
     STARTUP_SNAPSHOT["commands"] = {
         str(p): _mtime(p) for p in commands_mod.discover(PROJECT_DIR)
     }
-    STARTUP_SNAPSHOT["manifest"] = _mtime(PROJECT_DIR / "commands.yaml")
+    STARTUP_SNAPSHOT["manifest"] = _mtime(PROJECT_DIR / "controls.yaml")
     _STALE.update(agent_md=False, commands=False)
     _STALE_WARNED.update(agent_md=False, commands=False)
 
@@ -100,7 +100,7 @@ def check_staleness(force: bool = False) -> dict:
         current = {str(p): _mtime(p) for p in commands_mod.discover(PROJECT_DIR)}
         _STALE["commands"] = current != STARTUP_SNAPSHOT["commands"]
     if not _STALE["commands"]:
-        manifest_changed = _mtime(PROJECT_DIR / "commands.yaml") != STARTUP_SNAPSHOT.get("manifest")
+        manifest_changed = _mtime(PROJECT_DIR / "controls.yaml") != STARTUP_SNAPSHOT.get("manifest")
         if manifest_changed:
             _STALE["commands"] = True
     if _STALE["agent_md"] and not _STALE_WARNED["agent_md"]:
@@ -219,43 +219,55 @@ class ConnectionTracker(Middleware):
     async def on_list_resources(self, context, call_next):
         """Curated resource list: the agent entry point plus each module and
         connection.  Only the entry points appear as suggestions; every file
-        stays readable via the read_file tool."""
+        stays readable via the read_file tool.  Entries matching a
+        hidden_resources pattern in controls.yaml are unlisted; the manifest
+        is re-read per request, so hiding needs no restart."""
         await call_next(context)
-        result = []
+        commands_mod.load_manifest(PROJECT_DIR)
+        entries: list[tuple[str, Resource]] = []
         config = state.load_gcontext_yaml(PROJECT_DIR)
         agent_name = config.get("name", PROJECT_DIR.name)
-        result.append(Resource(
+        entries.append(("root", Resource(
             uri=f"agent://{agent_name}",
             name=agent_name,
             mime_type="text/markdown",
-        ))
+        )))
         modules = state.discover_modules(PROJECT_DIR)
         if modules:
-            result.append(Resource(
+            entries.append(("modules", Resource(
                 uri=f"agent://{agent_name}/modules",
                 name="modules",
                 mime_type="text/markdown",
-            ))
+            )))
             for name in modules:
-                result.append(Resource(
+                entries.append((f"modules/{name}", Resource(
                     uri=f"agent://{agent_name}/modules/{name}",
                     name=f"modules / {name}",
                     mime_type="text/markdown",
-                ))
+                )))
         connections = state.load_connections(PROJECT_DIR)
         if connections:
-            result.append(Resource(
+            entries.append(("connections", Resource(
                 uri=f"agent://{agent_name}/connections",
                 name="connections",
                 mime_type="text/markdown",
-            ))
+            )))
             for name in connections:
-                result.append(Resource(
+                entries.append((f"connections/{name}", Resource(
                     uri=f"agent://{agent_name}/connections/{name}",
                     name=f"connections / {name}",
                     mime_type="text/markdown",
-                ))
-        return result
+                )))
+        for rel_path in commands_mod._PINNED_RESOURCES:
+            file_path = PROJECT_DIR / rel_path
+            if file_path.exists():
+                entries.append((rel_path, Resource(
+                    uri=f"agent://{agent_name}/{rel_path}",
+                    name=rel_path,
+                    mime_type="text/markdown",
+                )))
+        return [res for key, res in entries
+                if not commands_mod.is_resource_hidden(key)]
 
     async def on_read_resource(self, context, call_next):
         from fastmcp.resources.base import ResourceResult
@@ -291,9 +303,14 @@ async def status_route(request: Request) -> JSONResponse:
     })
 
 
+def load_controls() -> tuple[int, int]:
+    """Load controls.yaml. Returns (disabled command count, hidden resource pattern count)."""
+    disabled = commands_mod.load_manifest(PROJECT_DIR)
+    return len(disabled), len(commands_mod._HIDDEN_RESOURCES)
+
+
 def register_commands() -> int:
     """Register command files as MCP prompts. Call once, after PROJECT_DIR is set."""
-    commands_mod.load_manifest(PROJECT_DIR)
     return commands_mod.register_commands(mcp, PROJECT_DIR)
 
 

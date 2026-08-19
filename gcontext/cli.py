@@ -246,9 +246,9 @@ def cmd_up(args):
     url = server_url(port)
 
     exec_mod.ensure_venv(project_dir)
+    n_disabled, n_hidden = server.load_controls()
     n_framework_prompts = server.register_framework_prompts()
     n_commands = server.register_commands()
-    n_disabled = len(commands_mod._DISABLED)
     n_base_lines, n_instruction_lines = server.load_instructions()
     server.snapshot_startup_files()
 
@@ -279,8 +279,10 @@ def cmd_up(args):
     if n_commands:
         prompt_bits.append(f"{n_commands} project command(s)")
     if n_disabled:
-        prompt_bits.append(f"{n_disabled} disabled in commands.yaml")
+        prompt_bits.append(f"{n_disabled} disabled in controls.yaml")
     print(f"Prompts: {' + '.join(prompt_bits)} as MCP prompts (slash commands in Claude Code).")
+    if n_hidden:
+        print(f"Resources: {n_hidden} hidden pattern(s) in controls.yaml (unlisted, still readable via read_file).")
     print()
     print("Connections appear below as clients attach. Ctrl+C stops the server,")
     print("and every client cleanly loses access.")

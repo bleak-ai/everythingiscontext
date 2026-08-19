@@ -32,6 +32,7 @@ reconnect, not a server restart.
 
 from __future__ import annotations
 
+import fnmatch
 import inspect
 import sys
 from pathlib import Path
@@ -44,32 +45,38 @@ FRONTMATTER_DELIM = "---"
 COMMAND_GLOBS = ("connections/*/commands/*", "modules/*/commands/*", "agents/*/commands/*")
 
 _DISABLED: set[str] = set()
+_HIDDEN_RESOURCES: list[str] = []
+_PINNED_RESOURCES: list[str] = []
 _STABLE_KEYS: dict[str, str] = {}
 
 
-def read_manifest(path: Path) -> set[str]:
-    """Read commands.yaml and return the set of disabled command keys.
-
-    Each key is ``owner/stem`` (e.g. ``hetzner-vps/show-stats``).
-    Returns an empty set when the file is missing or has no disabled list.
-    """
+def _read_controls(path: Path) -> dict:
+    """Read controls.yaml as a mapping. Empty dict when missing or malformed."""
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except OSError:
-        return set()
-    if not isinstance(data, dict):
-        return set()
-    disabled = data.get("disabled")
-    if not isinstance(disabled, list):
-        return set()
-    return set(disabled)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _read_list(data: dict, key: str) -> list[str]:
+    value = data.get(key)
+    return [str(v) for v in value] if isinstance(value, list) else []
 
 
 def load_manifest(root: Path) -> set[str]:
-    """Load commands.yaml from *root* and cache the disabled set in ``_DISABLED``."""
-    global _DISABLED
-    _DISABLED = read_manifest(root / "commands.yaml")
+    """Load controls.yaml from *root*: cache hidden commands, hidden resources, and pinned resources."""
+    global _DISABLED, _HIDDEN_RESOURCES, _PINNED_RESOURCES
+    data = _read_controls(root / "controls.yaml")
+    _DISABLED = set(_read_list(data, "hidden_commands"))
+    _HIDDEN_RESOURCES = _read_list(data, "hidden_resources")
+    _PINNED_RESOURCES = _read_list(data, "pinned_resources")
     return _DISABLED
+
+
+def is_resource_hidden(rel_key: str) -> bool:
+    """Check a resource key against the hidden_resources patterns."""
+    return any(fnmatch.fnmatch(rel_key, pat) for pat in _HIDDEN_RESOURCES)
 
 
 def _stable_key(path: Path, root: Path) -> str:

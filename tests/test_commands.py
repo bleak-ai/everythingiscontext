@@ -455,25 +455,25 @@ def test_register_framework_prompts_setup():
 # -- manifest & stable-key tests --
 
 
-def test_read_manifest_returns_disabled_set(tmp_path):
-    (tmp_path / "commands.yaml").write_text(
-        "disabled:\n"
+def test_load_manifest_returns_disabled_set(tmp_path):
+    (tmp_path / "controls.yaml").write_text(
+        "hidden_commands:\n"
         "  - hetzner-vps/show-stats\n"
         "  - framework/explain\n"
     )
-    disabled = commands.read_manifest(tmp_path / "commands.yaml")
-    assert disabled == {"hetzner-vps/show-stats", "framework/explain"}
+    commands.load_manifest(tmp_path)
+    assert commands._DISABLED == {"hetzner-vps/show-stats", "framework/explain"}
 
 
-def test_read_manifest_missing_file_returns_empty(tmp_path):
-    disabled = commands.read_manifest(tmp_path / "commands.yaml")
-    assert disabled == set()
+def test_load_manifest_missing_file_returns_empty(tmp_path):
+    commands.load_manifest(tmp_path)
+    assert commands._DISABLED == set()
 
 
-def test_read_manifest_empty_disabled_returns_empty(tmp_path):
-    (tmp_path / "commands.yaml").write_text("disabled: []\n")
-    disabled = commands.read_manifest(tmp_path / "commands.yaml")
-    assert disabled == set()
+def test_load_manifest_empty_list_returns_empty(tmp_path):
+    (tmp_path / "controls.yaml").write_text("hidden_commands: []\n")
+    commands.load_manifest(tmp_path)
+    assert commands._DISABLED == set()
 
 
 def test_stable_key_project_command(tmp_path):
@@ -493,8 +493,8 @@ def test_stable_key_framework(tmp_path):
 
 def test_manifest_disables_project_command(tmp_path):
     _write_commands(tmp_path)
-    (tmp_path / "commands.yaml").write_text(
-        "disabled:\n"
+    (tmp_path / "controls.yaml").write_text(
+        "hidden_commands:\n"
         "  - stripe/cancel\n"
     )
     mcp_inst = FastMCP("t")
@@ -507,7 +507,7 @@ def test_manifest_disables_project_command(tmp_path):
 
 def test_no_manifest_registers_all(tmp_path):
     _write_commands(tmp_path)
-    commands.load_manifest(tmp_path)  # no commands.yaml exists
+    commands.load_manifest(tmp_path)  # no controls.yaml exists
     mcp_inst = FastMCP("t")
     commands.register_commands(mcp_inst, tmp_path)
     names = {p.name for p in asyncio.run(_prompts(mcp_inst))}
@@ -516,8 +516,8 @@ def test_no_manifest_registers_all(tmp_path):
 
 
 def test_manifest_disables_framework_prompt(tmp_path):
-    (tmp_path / "commands.yaml").write_text(
-        "disabled:\n"
+    (tmp_path / "controls.yaml").write_text(
+        "hidden_commands:\n"
         "  - framework/explain\n"
     )
     mcp_inst = FastMCP("t")
@@ -531,8 +531,8 @@ def test_manifest_disables_framework_prompt(tmp_path):
 
 
 def test_manifest_disables_agent_command_at_install(tmp_path):
-    (tmp_path / "commands.yaml").write_text(
-        "disabled:\n"
+    (tmp_path / "controls.yaml").write_text(
+        "hidden_commands:\n"
         "  - newmod/deploy\n"
     )
     mcp_inst = FastMCP("t")
@@ -549,8 +549,8 @@ def test_manifest_disables_agent_command_at_install(tmp_path):
 
 def test_manifest_disables_generated_command(tmp_path):
     _write_template(tmp_path)
-    (tmp_path / "commands.yaml").write_text(
-        "disabled:\n"
+    (tmp_path / "controls.yaml").write_text(
+        "hidden_commands:\n"
         "  - cookbook/recipe_export-invoices\n"
     )
     mcp_inst = FastMCP("t")
@@ -559,3 +559,68 @@ def test_manifest_disables_generated_command(tmp_path):
     names = {p.name for p in asyncio.run(_prompts(mcp_inst))}
     assert "recipe_export_invoices" not in names
     assert "recipe_check_orders" in names
+
+
+# -- hidden resource tests --
+
+
+def test_is_resource_hidden_no_manifest(tmp_path):
+    commands.load_manifest(tmp_path)
+    assert commands.is_resource_hidden("modules/lab-repo") is False
+
+
+def test_is_resource_hidden_empty_list(tmp_path):
+    (tmp_path / "controls.yaml").write_text("hidden_resources: []\n")
+    commands.load_manifest(tmp_path)
+    assert commands.is_resource_hidden("modules/lab-repo") is False
+
+
+def test_is_resource_hidden_exact_key(tmp_path):
+    (tmp_path / "controls.yaml").write_text(
+        "hidden_resources:\n"
+        "  - modules/bot-commenter\n"
+        "  - connections/hetzner-vps\n"
+    )
+    commands.load_manifest(tmp_path)
+    assert commands.is_resource_hidden("modules/bot-commenter") is True
+    assert commands.is_resource_hidden("connections/hetzner-vps") is True
+    assert commands.is_resource_hidden("modules/lab-repo") is False
+    assert commands.is_resource_hidden("root") is False
+
+
+def test_is_resource_hidden_glob(tmp_path):
+    (tmp_path / "controls.yaml").write_text(
+        "hidden_resources:\n"
+        "  - modules/*\n"
+    )
+    commands.load_manifest(tmp_path)
+    assert commands.is_resource_hidden("modules/lab-repo") is True
+    assert commands.is_resource_hidden("modules/bot-commenter") is True
+    assert commands.is_resource_hidden("connections/stripe") is False
+    assert commands.is_resource_hidden("modules") is False
+
+
+def test_is_resource_hidden_file_level_key(tmp_path):
+    (tmp_path / "controls.yaml").write_text(
+        "hidden_resources:\n"
+        "  - modules/lab-repo/decisions.md\n"
+    )
+    commands.load_manifest(tmp_path)
+    assert commands.is_resource_hidden("modules/lab-repo/decisions.md") is True
+    assert commands.is_resource_hidden("modules/lab-repo") is False
+
+
+def test_controls_yaml_carries_both_keys(tmp_path):
+    _write_commands(tmp_path)
+    (tmp_path / "controls.yaml").write_text(
+        "hidden_commands:\n"
+        "  - stripe/cancel\n"
+        "hidden_resources:\n"
+        "  - modules/lab-repo\n"
+    )
+    mcp_inst = FastMCP("t")
+    commands.load_manifest(tmp_path)
+    commands.register_commands(mcp_inst, tmp_path)
+    names = {p.name for p in asyncio.run(_prompts(mcp_inst))}
+    assert "cancel" not in names
+    assert commands.is_resource_hidden("modules/lab-repo") is True
