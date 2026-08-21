@@ -30,6 +30,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from . import commands as commands_mod
+from . import controls as controls_mod
 from . import exec as exec_mod
 from . import fs
 from . import registry as registry_mod
@@ -63,6 +64,10 @@ _STALE_WARNED = {"agent_md": False, "commands": False}
 _STALE_CHECK_INTERVAL = 5.0
 _last_stale_check = 0.0
 
+# One stderr line per server lifetime while controls.yaml stays malformed;
+# reset once heal+load succeed again.
+_CONTROLS_WARNED = False
+
 
 def _mtime(path: Path) -> float | None:
     try:
@@ -81,6 +86,11 @@ def snapshot_startup_files():
     STARTUP_SNAPSHOT["manifest"] = _mtime(PROJECT_DIR / "controls.yaml")
     _STALE.update(agent_md=False, commands=False)
     _STALE_WARNED.update(agent_md=False, commands=False)
+
+
+def _resnapshot_manifest():
+    """After a heal write: only external edits should trip the staleness warning."""
+    STARTUP_SNAPSHOT["manifest"] = _mtime(PROJECT_DIR / "controls.yaml")
 
 
 def check_staleness(force: bool = False) -> dict:
@@ -219,11 +229,21 @@ class ConnectionTracker(Middleware):
     async def on_list_resources(self, context, call_next):
         """Curated resource list: the agent entry point plus each module and
         connection.  Only the entry points appear as suggestions; every file
-        stays readable via the read_file tool.  Entries matching a
-        hidden_resources pattern in controls.yaml are unlisted; the manifest
-        is re-read per request, so hiding needs no restart."""
+        stays readable via the read_file tool.  Entries set to off in
+        controls.yaml are unlisted; the manifest is re-read per request, so
+        hiding needs no restart."""
+        global _CONTROLS_WARNED
         await call_next(context)
-        commands_mod.load_manifest(PROJECT_DIR)
+        try:
+            if controls_mod.heal(PROJECT_DIR):
+                _resnapshot_manifest()
+            commands_mod.load_manifest(PROJECT_DIR)
+            _CONTROLS_WARNED = False
+        except controls_mod.ControlsError as e:
+            if not _CONTROLS_WARNED:
+                _CONTROLS_WARNED = True
+                print(f"  ! {e}; keeping the last good controls state",
+                      file=sys.stderr)
         entries: list[tuple[str, Resource]] = []
         config = state.load_gcontext_yaml(PROJECT_DIR)
         agent_name = config.get("name", PROJECT_DIR.name)
@@ -258,7 +278,7 @@ class ConnectionTracker(Middleware):
                     name=f"connections / {name}",
                     mime_type="text/markdown",
                 )))
-        for rel_path in commands_mod._PINNED_RESOURCES:
+        for rel_path in commands_mod.pinned_resources():
             file_path = PROJECT_DIR / rel_path
             if file_path.exists():
                 entries.append((rel_path, Resource(
@@ -304,9 +324,15 @@ async def status_route(request: Request) -> JSONResponse:
 
 
 def load_controls() -> tuple[int, int]:
-    """Load controls.yaml. Returns (disabled command count, hidden resource pattern count)."""
-    disabled = commands_mod.load_manifest(PROJECT_DIR)
-    return len(disabled), len(commands_mod._HIDDEN_RESOURCES)
+    """Migrate (once) + heal + load controls.yaml.
+    Returns (off command count, off resource count). Raises ControlsError on
+    malformed content: startup fails loud, never with an empty registry."""
+    controls_mod.migrate(PROJECT_DIR)
+    controls_mod.heal(PROJECT_DIR, warn=True)
+    reg = commands_mod.load_manifest(PROJECT_DIR)
+    n_off_cmds = sum(1 for v in reg.commands.values() if v is False)
+    n_off_res = sum(1 for v in reg.resources.values() if v is False)
+    return n_off_cmds, n_off_res
 
 
 def register_commands() -> int:
@@ -412,6 +438,11 @@ def write_file(path: str, content: str) -> str:
         commands_mod.refresh_generated(mcp, PROJECT_DIR, path)
     except Exception as e:
         print(f"  ! generated-command refresh failed: {e}", file=sys.stderr)
+    try:
+        if controls_mod.heal(PROJECT_DIR):
+            _resnapshot_manifest()
+    except controls_mod.ControlsError:
+        pass  # bad hand edit; the next list_resources warns
     return result
 
 
@@ -476,6 +507,11 @@ def run_adhoc_script(
 
 
 def _register_agent_commands(agent_id: str):
+    try:
+        if controls_mod.heal(PROJECT_DIR):
+            _resnapshot_manifest()
+    except controls_mod.ControlsError:
+        pass
     commands_mod.register_agent_commands(mcp, PROJECT_DIR, agent_id)
 
 

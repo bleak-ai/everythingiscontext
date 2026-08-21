@@ -162,7 +162,7 @@ async def api_commands(request: Request) -> JSONResponse:
         result.append(_command_entry(
             path, path.stem, "framework", f"gcontext/prompts/{path.name}", "md", key=key
         ))
-    for disabled_key in sorted(commands_mod._DISABLED):
+    for disabled_key in commands_mod.disabled_commands():
         parts = disabled_key.split("/", 1)
         d_owner = parts[0] if len(parts) > 1 else ""
         d_stem = parts[1] if len(parts) > 1 else parts[0]

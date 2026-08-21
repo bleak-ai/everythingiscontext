@@ -76,6 +76,7 @@ INIT_AGENT_GITIGNORE = """\
 secrets.env
 .venv/
 .venv-sync.lock
+.controls.lock
 """
 
 INIT_README = """\
@@ -129,6 +130,9 @@ def cmd_init(args):
         f.write_text(content)
 
     (target / "secrets.env").chmod(0o600)
+
+    from gcontext import controls
+    controls.heal(target)
 
     from gcontext.telemetry import ping_install
     ping_install(install_id, __version__)
@@ -246,7 +250,13 @@ def cmd_up(args):
     url = server_url(port)
 
     exec_mod.ensure_venv(project_dir)
-    n_disabled, n_hidden = server.load_controls()
+    from gcontext import controls
+    try:
+        n_off_cmds, n_off_res = server.load_controls()
+    except controls.ControlsError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        print("Fix controls.yaml and run gcontext up again.", file=sys.stderr)
+        sys.exit(1)
     n_framework_prompts = server.register_framework_prompts()
     n_commands = server.register_commands()
     n_base_lines, n_instruction_lines = server.load_instructions()
@@ -278,11 +288,12 @@ def cmd_up(args):
     prompt_bits = [f"{n_framework_prompts} built-in ({builtin_names})"]
     if n_commands:
         prompt_bits.append(f"{n_commands} project command(s)")
-    if n_disabled:
-        prompt_bits.append(f"{n_disabled} disabled in controls.yaml")
+    if n_off_cmds:
+        prompt_bits.append(f"{n_off_cmds} off in controls.yaml")
     print(f"Prompts: {' + '.join(prompt_bits)} as MCP prompts (slash commands in Claude Code).")
-    if n_hidden:
-        print(f"Resources: {n_hidden} hidden pattern(s) in controls.yaml (unlisted, still readable via read_file).")
+    if n_off_res:
+        print(f"Resources: {n_off_res} off in controls.yaml "
+              "(unlisted, still readable via read_file).")
     print()
     print("Connections appear below as clients attach. Ctrl+C stops the server,")
     print("and every client cleanly loses access.")

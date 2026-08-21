@@ -32,7 +32,6 @@ reconnect, not a server restart.
 
 from __future__ import annotations
 
-import fnmatch
 import inspect
 import sys
 from pathlib import Path
@@ -41,42 +40,43 @@ from typing import Any
 
 import yaml
 
-FRONTMATTER_DELIM = "---"
-COMMAND_GLOBS = ("connections/*/commands/*", "modules/*/commands/*", "agents/*/commands/*")
+from . import controls
 
-_DISABLED: set[str] = set()
-_HIDDEN_RESOURCES: list[str] = []
-_PINNED_RESOURCES: list[str] = []
+FRONTMATTER_DELIM = "---"
+COMMAND_GLOBS = controls.COMMAND_GLOBS
+
+_REGISTRY = controls.Registry()
+_ROOT: Path | None = None
 _STABLE_KEYS: dict[str, str] = {}
 
 
-def _read_controls(path: Path) -> dict:
-    """Read controls.yaml as a mapping. Empty dict when missing or malformed."""
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except OSError:
-        return {}
-    return data if isinstance(data, dict) else {}
+def load_manifest(root: Path) -> controls.Registry:
+    """Parse controls.yaml into the module registry.
 
-
-def _read_list(data: dict, key: str) -> list[str]:
-    value = data.get(key)
-    return [str(v) for v in value] if isinstance(value, list) else []
-
-
-def load_manifest(root: Path) -> set[str]:
-    """Load controls.yaml from *root*: cache hidden commands, hidden resources, and pinned resources."""
-    global _DISABLED, _HIDDEN_RESOURCES, _PINNED_RESOURCES
-    data = _read_controls(root / "controls.yaml")
-    _DISABLED = set(_read_list(data, "hidden_commands"))
-    _HIDDEN_RESOURCES = _read_list(data, "hidden_resources")
-    _PINNED_RESOURCES = _read_list(data, "pinned_resources")
-    return _DISABLED
+    Raises ControlsError on malformed content, leaving the previous good
+    registry in place (callers at request time catch and keep serving)."""
+    global _REGISTRY, _ROOT
+    _ROOT = root
+    reg = controls.parse(root / "controls.yaml")
+    if reg is not None:
+        _REGISTRY = reg
+    return _REGISTRY
 
 
 def is_resource_hidden(rel_key: str) -> bool:
-    """Check a resource key against the hidden_resources patterns."""
-    return any(fnmatch.fnmatch(rel_key, pat) for pat in _HIDDEN_RESOURCES)
+    """True when the registry sets this resource key off."""
+    return not controls.resource_enabled(_REGISTRY, rel_key)
+
+
+def pinned_resources() -> list[str]:
+    return list(_REGISTRY.pinned)
+
+
+def disabled_commands() -> list[str]:
+    """Sorted keys of commands explicitly set to off in the registry.
+
+    Auto entries (None) are not off; they follow the owner cascade."""
+    return sorted(k for k, v in _REGISTRY.commands.items() if v is False)
 
 
 def _stable_key(path: Path, root: Path) -> str:
@@ -102,9 +102,9 @@ def _stable_key_generated(owner: str, template_stem: str, entry_name: str) -> st
     return f"{owner}/{template_stem}_{entry_name}"
 
 
-def _is_disabled(key: str) -> bool:
-    """Check if a command's stable key is in ``_DISABLED``."""
-    return key in _DISABLED
+def _is_disabled(key: str, template_key: str | None = None) -> bool:
+    """Registry check: explicit entry > template entry > owner cascade > on."""
+    return not controls.command_enabled(_REGISTRY, _ROOT, key, template_key)
 
 
 def parse_command(text: str) -> tuple[dict[str, Any], str]:
@@ -308,7 +308,7 @@ def _expand_template(mcp, root: Path, path: Path) -> int:
         short = f"{path.stem}_{match.name}".replace("-", "_")
         name = short if short not in _REGISTERED else _short_name(f"{owner}__{short}")
         gen_key = _stable_key_generated(owner, path.stem, match.name)
-        if _is_disabled(gen_key):
+        if _is_disabled(gen_key, _stable_key(path, root)):
             continue
         entry_meta = _entry_frontmatter(match / "index.md")
         if entry_meta is None:
@@ -408,14 +408,12 @@ def discover(root: Path) -> list[Path]:
     )
 
 
-_FRAMEWORK_SKIP = {"framework-instructions", "resources", "README"}
-
 
 def discover_framework_prompts() -> list[Path]:
     """Framework-shipped prompt files (same filter as register_framework_prompts)."""
     prompts_dir = Path(__file__).parent / "prompts"
     return sorted(
-        p for p in prompts_dir.glob("*.md") if p.stem not in _FRAMEWORK_SKIP
+        p for p in prompts_dir.glob("*.md") if p.stem not in controls.FRAMEWORK_SKIP
     )
 
 
@@ -445,7 +443,7 @@ def register_framework_prompts(mcp, root: Path | None = None) -> int:
     prompts_dir = Path(__file__).parent / "prompts"
     count = 0
     for path in sorted(prompts_dir.glob("*.md")):
-        if path.stem in _FRAMEWORK_SKIP:
+        if path.stem in controls.FRAMEWORK_SKIP:
             continue
         if _is_disabled(f"framework/{path.stem}"):
             continue
