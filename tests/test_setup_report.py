@@ -88,7 +88,8 @@ def test_add_stamps_setup_pending(tmp_path, monkeypatch):
 
 def test_connection_kinds_enum():
     assert "browser" in CONNECTION_KINDS
-    assert len(CONNECTION_KINDS) == 8
+    assert "scheduler" in CONNECTION_KINDS
+    assert len(CONNECTION_KINDS) == 9
 
 
 # --- The report ---

@@ -293,9 +293,18 @@ def test_share_rejects_stray_runs_entries(template):
     (template / "runs" / "notes.md").write_text("x")
     result = run_cli("share", str(template), cwd=template.parent)
     assert result.returncode == 1
-    assert "runs/ may contain only the example/ folder" in result.stderr
+    assert "runs/ may contain only the example/ folder and an index.md" in result.stderr
     assert "2026-01-01-real" in result.stderr
     assert "notes.md" in result.stderr
+
+
+def test_share_allows_runs_index_md(template):
+    """Templates ship runs/index.md as the folder map; the validator accepts it."""
+    (template / "runs" / "index.md").write_text(
+        "# Runs\n\nOne folder per execution.\n\n- `example/`: fabricated sample run\n"
+    )
+    result = run_cli("share", str(template), cwd=template.parent)
+    assert result.returncode == 0, result.stderr
 
 
 def test_share_rejects_setup_md_without_description(template):
@@ -313,14 +322,13 @@ def test_share_rejects_setup_md_without_frontmatter(template):
     assert "frontmatter" in result.stderr
 
 
-def test_share_rejects_setup_md_greeting_heading(template):
+def test_share_allows_setup_md_plain_title(template):
+    """A plain `# Setup` title is a title, not a greeting; templates ship it."""
     (template / "commands" / "setup.md").write_text(
         "---\ndescription: d\n---\n\n# Setup\n\n1. Do.\n"
     )
     result = run_cli("share", str(template), cwd=template.parent)
-    assert result.returncode == 1
-    assert "greeting heading" in result.stderr
-    assert "framework owns the dialogue" in result.stderr
+    assert result.returncode == 0, result.stderr
 
 
 def test_share_rejects_setup_md_welcome_heading(template):
@@ -367,9 +375,16 @@ def test_share_skips_binary_with_warning(template):
     assert "Skipping image.bin" in result.stderr
 
 
-def test_share_rejects_malformed_child_index(template):
+def test_share_allows_template_index_sections(template):
+    """The template standard defines its own index formats (Entry points,
+    Contents, prose sections); the state-folder strict index shape does not
+    apply to templates (agents.md: the only code-enforced requirement is
+    index.md with valid frontmatter)."""
+    (template / "index.md").write_text(
+        INDEX_MD
+        + "\n## Entry points\n\n- `run`: the main action.\n"
+        + "\n## Contents\n\n- `steps/`: the procedure.\n\nExtra prose after the list.\n"
+    )
     (template / "steps" / "index.md").write_text("1-do.md: do things\n")
     result = run_cli("share", str(template), cwd=template.parent)
-    assert result.returncode == 1
-    assert "steps/index.md" in result.stderr
-    assert "title" in result.stderr
+    assert result.returncode == 0, result.stderr

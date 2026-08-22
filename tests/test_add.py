@@ -116,10 +116,47 @@ def test_add_installs_bundle_into_agents(registry, agent):
             assert installed == f["content"]
     assert "installed Demo Flow (5 files) at agents/demo-flow/" in result.stdout
     assert "Next steps:" in result.stdout
-    assert "1. Stop the server (Ctrl-C)." in result.stdout
-    assert "2. Start it again: gcontext up ." in result.stdout
-    assert "3. Reconnect in your client: type /mcp in Claude Code." in result.stdout
-    assert "4. Run the setup: /mcp__a__demo_flow__setup" in result.stdout
+    assert "1. Apply it: gcontext reload (server not running: gcontext up .)" in result.stdout
+    assert "2. Reconnect in your client: type /mcp in Claude Code." in result.stdout
+    assert "3. Run the setup: /mcp__a__demo_flow__setup" in result.stdout
+
+
+def test_add_excludes_root_readme(registry, agent):
+    """README.md at the agent root documents the agent on GitHub; the
+    registry build excludes it, and install honors the same exclusion:
+    it never lands on disk and never enters the .installed hashes."""
+    import yaml
+    files = BUNDLE_FILES + [
+        {"path": "README.md", "content": "# Demo Flow on GitHub\n"},
+        {"path": "steps/README.md", "content": "# Nested readme, ships\n"},
+    ]
+    registry[0] = _build_tarball(
+        [{"path": f"demo-flow/{f['path']}", "content": f["content"]} for f in files]
+    )
+    result = run_cli("add", "demo-flow", cwd=agent)
+    assert result.returncode == 0, result.stderr
+    module = agent / "agents" / "demo-flow"
+    assert not (module / "README.md").exists()
+    # Only the root README.md is excluded; a nested one is part of the state.
+    assert (module / "steps" / "README.md").exists()
+    manifest = yaml.safe_load((module / ".installed").read_text())
+    assert "README.md" not in manifest["files"]
+    assert "steps/README.md" in manifest["files"]
+    assert "index.md" in manifest["files"]
+
+
+def test_add_url_excludes_root_readme(registry, agent):
+    """The exclusion also holds for the public GitHub URL install path."""
+    import yaml
+    files = BUNDLE_FILES + [{"path": "README.md", "content": "# On GitHub\n"}]
+    registry[0] = _build_tarball(files, prefix="repo-main")
+    local_url = os.environ["GCONTEXT_REGISTRY"]
+    result = run_cli("add", local_url, cwd=agent)
+    assert result.returncode == 0, result.stderr
+    module = agent / "agents" / "demo-flow"
+    assert not (module / "README.md").exists()
+    manifest = yaml.safe_load((module / ".installed").read_text())
+    assert "README.md" not in manifest["files"]
 
 
 def test_add_without_setup_command_omits_step_four(registry, agent):
@@ -129,15 +166,15 @@ def test_add_without_setup_command_omits_step_four(registry, agent):
     )
     result = run_cli("add", "demo-flow", cwd=agent)
     assert result.returncode == 0, result.stderr
-    assert "3. Reconnect in your client" in result.stdout
-    assert "4. Run the setup:" not in result.stdout
+    assert "2. Reconnect in your client" in result.stdout
+    assert "3. Run the setup:" not in result.stdout
 
 
 def test_add_with_project_argument_names_directory(registry, agent):
     registry[0] = _build_tarball(_registry_files())
     result = run_cli("add", "demo-flow", str(agent), cwd=agent.parent)
     assert result.returncode == 0, result.stderr
-    assert f"2. Start it again: gcontext up {agent}" in result.stdout
+    assert f"1. Apply it: gcontext reload (server not running: gcontext up {agent})" in result.stdout
 
 
 def test_add_existing_agent_warns_and_stops(registry, agent):
