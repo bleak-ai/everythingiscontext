@@ -9,6 +9,16 @@ export async function getJSON(path) {
   return d;
 }
 
+// The one write seam: POST /api/controls (single controls.yaml entry per
+// request). Throws with the server's message on 400/409 so callers can show
+// it verbatim.
+export async function postJSON(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({ error: `${r.status} ${r.statusText}` }));
+  if (!r.ok) throw new Error((d && d.error) || `${r.status}`);
+  return d;
+}
+
 export function copyText(text) {
   if (navigator.clipboard) return void navigator.clipboard.writeText(text);
   const ta = document.createElement("textarea");

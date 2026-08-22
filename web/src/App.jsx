@@ -6,11 +6,13 @@ import Connections from "./Connections.jsx";
 import Modules from "./Modules.jsx";
 import Agents from "./Agents.jsx";
 import Commands from "./Commands.jsx";
+import Controls from "./Controls.jsx";
 import Files from "./Files.jsx";
 import Activity from "./Activity.jsx";
 
-// Read-only local dashboard for one gcontext project. The server holds no UI
-// state: every section fetches fresh from /api/* and refetches on tab focus.
+// Local dashboard for one gcontext project. The server holds no UI state:
+// every section fetches fresh from /api/*. The one write path is the
+// Controls tab (single controls.yaml entries); everything else is read-only.
 
 function NavItem({ active, label, onClick }) {
   const [h, hp] = useHover();
@@ -34,6 +36,7 @@ function Sidebar({ section, setSection, project, sessions }) {
     { key: "modules", label: "Modules" },
     { key: "agents", label: "Agents" },
     { key: "commands", label: "Commands" },
+    { key: "controls", label: "Controls" },
     { key: "files", label: "Files" },
     { key: "activity", label: "Activity" },
   ];
@@ -67,7 +70,7 @@ function Sidebar({ section, setSection, project, sessions }) {
   );
 }
 
-const SECTIONS = ["overview", "connections", "modules", "agents", "commands", "files", "activity"];
+const SECTIONS = ["overview", "connections", "modules", "agents", "commands", "controls", "files", "activity"];
 const savedSection = () => {
   const s = localStorage.getItem("gc.section");
   return SECTIONS.includes(s) ? s : "overview";
@@ -127,6 +130,7 @@ export default function App() {
             {section === "modules" && <Modules />}
             {section === "agents" && <Agents />}
             {section === "commands" && <Commands />}
+            {section === "controls" && <Controls />}
             {section === "files" && <Files />}
             {section === "activity" && <Activity />}
           </div>

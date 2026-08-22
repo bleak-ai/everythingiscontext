@@ -2,8 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import { getJSON, fileLabel, refPrompt } from "./lib.js";
-import { C, mono, pageTitle, sectionLabel, EmptyState, useHover, FileGlyph } from "./ui.jsx";
+import { getJSON, postJSON, fileLabel, refPrompt } from "./lib.js";
+import { C, mono, pageTitle, sectionLabel, EmptyState, useHover, useUi, FileGlyph } from "./ui.jsx";
 import CopyPrompt from "./Copy.jsx";
 
 // Files = read-only browser over the project folder. Left: the tree from
@@ -30,10 +30,32 @@ function buildTree(entries) {
   return roots;
 }
 
-function TreeRow({ node, depth, selected, open, onToggle, onSelect }) {
+// Pushpin: filled accent when the file is pinned into the resource picker.
+function PinIcon({ pinned, hover }) {
+  const color = pinned ? C.accent : hover ? C.ink : C.t3;
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill={pinned ? color : "none"} style={{ display: "block" }}>
+      <path d="M9 3h6l-1 7 3 3v2h-4l-1 6-1-6H7v-2l3-3-1-7z" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PinBtn({ path, pinned, onPin, style }) {
+  const [h, hp] = useHover();
+  return (
+    <button {...hp} onClick={() => onPin(path, !pinned)}
+      title={pinned ? `Unpin ${path} from the resource picker` : `Pin ${path} into the resource picker`}
+      style={{ all: "unset", cursor: "pointer", width: 22, height: 22, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: 5, background: h ? C.soft : "transparent", flexShrink: 0, ...style }}>
+      <PinIcon pinned={pinned} hover={h} />
+    </button>
+  );
+}
+
+function TreeRow({ node, depth, selected, open, onToggle, onSelect, pinnedSet, onPin }) {
   const [h, hp] = useHover();
   const isSel = selected === node.path;
   const ref = node.dir ? `${node.path}/` : node.path;
+  const isPinned = pinnedSet.has(node.path);
   return (
     <>
       <div {...hp} style={{ display: "flex", alignItems: "center", gap: 6, borderRadius: 6, background: isSel ? "#fff" : h ? C.rowHover : "transparent", boxShadow: isSel ? "0 1px 2px rgba(28,27,25,.06)" : "none", transition: "background .1s", paddingRight: 6 }}>
@@ -46,10 +68,11 @@ function TreeRow({ node, depth, selected, open, onToggle, onSelect }) {
             : <span style={{ width: 10, flexShrink: 0 }} />}
           <span style={{ fontFamily: mono, fontSize: 12, fontWeight: node.dir ? 600 : 400, color: node.dir ? C.tFolder : C.t2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{node.name}{node.dir ? "/" : ""}</span>
         </button>
+        {!node.dir && (h || isPinned) && <PinBtn path={node.path} pinned={isPinned} onPin={onPin} />}
         {h && <CopyPrompt icon text={refPrompt(ref, node.dir)} title={`Copy a reference to ${ref}`} style={{ width: 22, height: 22 }} />}
       </div>
       {node.dir && open.has(node.path) && node.children.map((c) => (
-        <TreeRow key={c.path} node={c} depth={depth + 1} selected={selected} open={open} onToggle={onToggle} onSelect={onSelect} />
+        <TreeRow key={c.path} node={c} depth={depth + 1} selected={selected} open={open} onToggle={onToggle} onSelect={onSelect} pinnedSet={pinnedSet} onPin={onPin} />
       ))}
     </>
   );
@@ -102,8 +125,19 @@ export default function Files() {
   const [err, setErr] = useState(null);
   const [selected, setSelected] = useState(null);
   const [open, setOpen] = useState(() => new Set(["connections", "modules"]));
+  const [pinned, setPinned] = useState([]);
+  const ui = useUi();
 
-  useEffect(() => { getJSON("/api/tree").then((d) => setEntries(d.tree)).catch((e) => setErr(e.message)); }, []);
+  useEffect(() => {
+    getJSON("/api/tree").then((d) => setEntries(d.tree)).catch((e) => setErr(e.message));
+    getJSON("/api/controls").then((d) => setPinned(d.pinned)).catch(() => {});
+  }, []);
+  const pinnedSet = useMemo(() => new Set(pinned), [pinned]);
+  const onPin = (path, want) => {
+    postJSON("/api/controls", { pin: path, pinned: want })
+      .then((d) => { setPinned(d.pinned); ui.toast(want ? "Pinned into the resource picker" : "Unpinned"); })
+      .catch((e) => ui.error(e.message));
+  };
   const roots = useMemo(() => buildTree(entries || []), [entries]);
   const toggle = (path) => setOpen((prev) => {
     const next = new Set(prev);
@@ -118,13 +152,13 @@ export default function Files() {
     <div>
       <h1 style={{ ...pageTitle, marginBottom: 5 }}>Files</h1>
       <p style={{ margin: "0 0 20px", color: C.tMuted, fontSize: 13.5, lineHeight: 1.55, maxWidth: 640 }}>
-        The project folder as the agent sees it. Hover a row to copy a prompt that points your agent at that file or folder. <span style={{ fontFamily: mono }}>secrets.env</span> and machine folders never appear here.
+        The project folder as the agent sees it. Hover a row to copy a prompt that points your agent at that file or folder, or pin a file into the resource picker. <span style={{ fontFamily: mono }}>secrets.env</span> and machine folders never appear here.
       </p>
       <div style={{ display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
         <div className="gc-scroll" style={{ flex: "0 1 280px", minWidth: 230, maxHeight: "72vh", overflowY: "auto", border: `1px solid ${C.border}`, borderRadius: 11, background: C.sidebar, padding: 8 }}>
           <div style={{ ...sectionLabel, padding: "4px 8px 8px" }}>Project</div>
           {roots.map((n) => (
-            <TreeRow key={n.path} node={n} depth={0} selected={selected} open={open} onToggle={toggle} onSelect={setSelected} />
+            <TreeRow key={n.path} node={n} depth={0} selected={selected} open={open} onToggle={toggle} onSelect={setSelected} pinnedSet={pinnedSet} onPin={onPin} />
           ))}
         </div>
         <div style={{ flex: "1 1 460px", minWidth: 320 }}>
