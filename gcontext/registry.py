@@ -31,6 +31,16 @@ DEFAULT_REGISTRY = "bleak-ai/agents@main"
 DEFAULT_API = "https://api.gcontext.ai"
 MANIFEST_NAME = ".installed"
 
+# Files at the agent root that document the agent on GitHub but are not part
+# of the installed state. scripts/build_registry.py applies the same rule to
+# the registry catalog; install and update honor it here.
+EXCLUDED_ROOT_FILES = ("README.md",)
+
+
+def _drop_excluded(files: list[dict]) -> list[dict]:
+    """Drop root-level files that never install (see EXCLUDED_ROOT_FILES)."""
+    return [f for f in files if f["path"] not in EXCLUDED_ROOT_FILES]
+
 
 def registry_spec() -> str:
     return os.environ.get("GCONTEXT_REGISTRY", DEFAULT_REGISTRY)
@@ -140,7 +150,7 @@ def fetch_agent_by_id(agent_id: str) -> tuple[list[dict], str]:
             matched.append({"path": f["path"], "content": f["content"]})
     if not matched:
         raise RegistryError(f"no agent '{agent_id}' found in the registry")
-    return matched, ref
+    return _drop_excluded(matched), ref
 
 
 def fetch_agent_by_url(url: str) -> tuple[list[dict], str]:
@@ -155,7 +165,7 @@ def fetch_agent_by_url(url: str) -> tuple[list[dict], str]:
     files = extract_files(tf, subpath=subpath)
     if not files:
         raise RegistryError(f"no files found at {url}")
-    return files, ref
+    return _drop_excluded(files), ref
 
 
 def validate_bundle(files) -> dict:
@@ -478,8 +488,6 @@ def search_catalog(query: str = "") -> list[dict]:
 
 def check_agent(project_dir: Path, module_name: str, upstream: dict | None = None) -> dict:
     module_dir = project_dir / "agents" / module_name
-    if not (module_dir / MANIFEST_NAME).exists():
-        module_dir = project_dir / "modules" / module_name
     manifest = read_manifest(module_dir)
     if manifest is None:
         return {"id": module_name, "status": "untracked"}
@@ -548,14 +556,10 @@ def check_agent(project_dir: Path, module_name: str, upstream: dict | None = Non
 
 def check_all(project_dir: Path) -> list[dict]:
     tracked = {}
-    for parent in ("agents", "modules"):
-        scan_dir = project_dir / parent
-        if not scan_dir.is_dir():
-            continue
+    scan_dir = project_dir / "agents"
+    if scan_dir.is_dir():
         for d in sorted(scan_dir.iterdir()):
             if not d.is_dir():
-                continue
-            if d.name in tracked:
                 continue
             manifest = read_manifest(d)
             if manifest is None:
@@ -576,7 +580,10 @@ def check_all(project_dir: Path) -> list[dict]:
         matched = {}
         for f in all_files:
             if f["path"].startswith(prefix):
-                matched[f["path"][len(prefix):]] = f["content"]
+                rel = f["path"][len(prefix):]
+                if rel in EXCLUDED_ROOT_FILES:
+                    continue
+                matched[rel] = f["content"]
         upstream_by_template[template_id] = matched
 
     results = []
@@ -589,8 +596,6 @@ def check_all(project_dir: Path) -> list[dict]:
 
 def update_agent(project_dir: Path, module_name: str) -> dict:
     module_dir = project_dir / "agents" / module_name
-    if not (module_dir / MANIFEST_NAME).exists():
-        module_dir = project_dir / "modules" / module_name
     manifest = read_manifest(module_dir)
     if manifest is None:
         raise RegistryError(

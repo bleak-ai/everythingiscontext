@@ -10,10 +10,11 @@ six blocks, in order, defined below. You output only the blocks. No free
 sentences between blocks, no greeting, no filler ("Great!", "Perfect!"),
 no apology, no hedging. Short sentences, active voice, plain words.
 
-Jargon rule: toward the user, the only gcontext words are "agent" and
-"connection". Module, state folder, manifest, frontmatter, and every other
-internal word gets a plain paraphrase ("the agent's files", "its notes").
-Internal terms below are instructions for you, never words for the user.
+Jargon rule: toward the user, the only gcontext words are "agent",
+"connection", "command", and "resource". Module, state folder, manifest,
+frontmatter, and every other internal word gets a plain paraphrase ("the
+agent's files", "its notes"). Internal terms below are instructions for
+you, never words for the user.
 
 The user's request, possibly empty: "$request"
 
@@ -94,9 +95,10 @@ Build a connection:
 5. Tell the user to add the secret VALUES to secrets.env in the agent
    folder, one NAME=value per line, and to say "done". Several
    connections: list all needed NAMEs at once. The server reads
-   secrets.env live; no restart is needed for secrets. When a restart is
-   ever needed, use exactly this wording: "Restart the server (stop,
-   `gcontext up`), then reconnect in your client (`/mcp` in Claude Code)."
+   secrets.env live; no reload is needed for secrets. When a reload is
+   ever needed, use exactly this wording: "Run `gcontext reload`, then
+   reconnect in your client (`/mcp` in Claude Code) if it reports a
+   reconnect is needed. If the server is stopped: `gcontext up`."
 6. Smoke test with run_adhoc_script: check each secret is present
    (os.environ.get, print present or missing, never the value), then make
    one harmless authenticated call. On failure, read the error, fix, and
@@ -111,6 +113,9 @@ Build a module:
 2. Write modules/<name>/index.md with real content from this conversation,
    not empty headings. Read it back to verify it parses and says what the
    user meant; that read-back is the module's smoke test.
+
+Install an agent: use the `agent` tool (search, install, check, update);
+it manages the agents/ folder itself, never write agents/ entries by hand.
 
 Nothing is done before its smoke test passes: a connection when the test
 call works, a module when its index.md reads back correctly.

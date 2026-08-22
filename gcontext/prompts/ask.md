@@ -13,10 +13,10 @@ The question: "$question"
 ## How to answer
 
 1. Start by reading agent.md if you have not already.
-2. Use list_dir on connections/ and modules/ to see what is available.
-3. Search the relevant modules and connections for the answer using grep
+2. Use list_dir on connections/, modules/, and agents/ to see what is available.
+3. Search the relevant modules, connections, and agents for the answer using grep
    and read_file.
 4. Answer concisely based on what you find. If the state folder does not
    contain enough information, say so and suggest what the user could add.
 5. If the question is empty, introduce yourself: say what you are, what
-   modules and connections you have, and what you can help with.
+   modules, connections, and agents you have, and what you can help with.

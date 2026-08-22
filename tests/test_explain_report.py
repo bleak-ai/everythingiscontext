@@ -38,7 +38,7 @@ deps: []
 
 
 def _write_agent(root, index_md=INDEX_MD, name="browser-recipes"):
-    module = root / "modules" / name
+    module = root / "agents" / name
     module.mkdir(parents=True)
     (module / "index.md").write_text(index_md)
     return module

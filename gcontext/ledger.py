@@ -17,6 +17,8 @@ def build(root: Path) -> list[dict]:
     modules = state.discover_modules(root)
     n_files = sum(len(state.connection_files(root, c)) for c in connections)
     n_files += sum(len(state.module_files(root, m)) for m in modules)
+    n_files += sum(len(state.agent_files(root, a))
+                   for a in state.discover_agents(root))
 
     ledger = []
 
@@ -31,7 +33,7 @@ def build(root: Path) -> list[dict]:
         ledger.append({"id": "G1", "label": "agent.md", "detail": "file missing, only the framework instructions pushed at connect", "status": "skipped"})
 
     ledger.append({"id": "G2", "label": "tool descriptions", "detail": "7 gcontext tools, pushed at connect", "status": "loaded"})
-    g3_detail = f"{n_files} files in connections/ + modules/"
+    g3_detail = f"{n_files} files in connections/ + modules/ + agents/"
     if state.archived(root):
         g3_detail += "; archive/ not scanned, readable by path"
     ledger.append({"id": "G3", "label": "read_file()", "detail": g3_detail, "status": "on demand"})

@@ -232,7 +232,7 @@ def _restart_note(root: Path, target: Path) -> str:
         )
     if (
         len(parts) == 4
-        and parts[0] in ("connections", "modules")
+        and parts[0] in ("connections", "modules", "agents")
         and parts[2] == "commands"
         and target.suffix in (".md", ".py")
     ):

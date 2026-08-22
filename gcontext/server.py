@@ -7,7 +7,7 @@ The actual work lives in the per-concern modules:
 
     fs.py        read_file / write_file / list_dir / grep (path confinement, guards)
     exec.py      run_script / run_adhoc_script (venv, secrets injection, output scrubbing)
-    state.py     connections / modules / archive scanning
+    state.py     connections / modules / agents / archive scanning
     secrets.py   secrets.env parsing and output scrubbing
     ledger.py    the context ledger
     commands.py  commands/ folders -> MCP prompts
@@ -29,6 +29,7 @@ from fastmcp.server.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from . import __version__
 from . import commands as commands_mod
 from . import controls as controls_mod
 from . import exec as exec_mod
@@ -115,12 +116,12 @@ def check_staleness(force: bool = False) -> dict:
             _STALE["commands"] = True
     if _STALE["agent_md"] and not _STALE_WARNED["agent_md"]:
         _STALE_WARNED["agent_md"] = True
-        print("  ! agent.md changed since start; restart to push the new version "
-              "(stop, gcontext up, reconnect the client)", file=sys.stderr)
+        print("  ! agent.md changed since start; run gcontext reload, then "
+              "reconnect the client to push the new version", file=sys.stderr)
     if _STALE["commands"] and not _STALE_WARNED["commands"]:
         _STALE_WARNED["commands"] = True
-        print("  ! commands changed since start; restart to re-register them",
-              file=sys.stderr)
+        print("  ! commands changed since start; run gcontext reload to "
+              "re-register them", file=sys.stderr)
     return dict(_STALE)
 
 # Activity feed for the dashboard: in-memory ring buffer, gone on restart.
@@ -262,7 +263,8 @@ class ConnectionTracker(Middleware):
             for name in modules:
                 entries.append((f"modules/{name}", Resource(
                     uri=f"agent://{agent_name}/modules/{name}",
-                    name=f"modules / {name}",
+                    name=commands_mod.resource_display(
+                        f"modules/{name}", f"modules / {name}"),
                     mime_type="text/markdown",
                 )))
         connections = state.load_connections(PROJECT_DIR)
@@ -275,7 +277,22 @@ class ConnectionTracker(Middleware):
             for name in connections:
                 entries.append((f"connections/{name}", Resource(
                     uri=f"agent://{agent_name}/connections/{name}",
-                    name=f"connections / {name}",
+                    name=commands_mod.resource_display(
+                        f"connections/{name}", f"connections / {name}"),
+                    mime_type="text/markdown",
+                )))
+        agents = state.discover_agents(PROJECT_DIR)
+        if agents:
+            entries.append(("agents", Resource(
+                uri=f"agent://{agent_name}/agents",
+                name="agents",
+                mime_type="text/markdown",
+            )))
+            for name in agents:
+                entries.append((f"agents/{name}", Resource(
+                    uri=f"agent://{agent_name}/agents/{name}",
+                    name=commands_mod.resource_display(
+                        f"agents/{name}", f"agents / {name}"),
                     mime_type="text/markdown",
                 )))
         for rel_path in commands_mod.pinned_resources():
@@ -369,6 +386,58 @@ def load_instructions() -> tuple[int, int]:
     return len(base.splitlines()), len(text.splitlines())
 
 
+def reload() -> dict:
+    """Re-run the startup pipeline in place and report what changed.
+
+    Applies agent.md, command file, and controls.yaml edits to the running
+    server: reload controls, re-register every prompt (diffing, no
+    duplicates), reload instructions, re-snapshot the startup files so the
+    staleness warnings re-arm. On a malformed controls.yaml nothing is
+    touched and the report carries only the error.
+
+    client_reconnect_needed is true when agent.md changed (it is delivered
+    in the MCP handshake) or when the prompt name set changed (Claude Code
+    ignores prompts/list_changed), so the CLI can tell the user honestly
+    whether a client reconnect is still required.
+    """
+    global _CONTROLS_WARNED
+    stale_before = check_staleness(force=True)
+    try:
+        n_off_cmds, n_off_res = load_controls()
+    except controls_mod.ControlsError as e:
+        return {"error": str(e), "version": __version__}
+    diff = commands_mod.reregister_all(mcp, PROJECT_DIR)
+    n_base_lines, n_agent_lines = load_instructions()
+    snapshot_startup_files()
+    _CONTROLS_WARNED = False
+    _notify_prompts_changed()
+    agent_md_changed = bool(stale_before.get("agent_md"))
+    prompts_changed = bool(diff["removed"] or diff["added"])
+    return {
+        "version": __version__,
+        "framework_prompts": diff["framework"],
+        "project_commands": diff["project"],
+        "removed": diff["removed"],
+        "added": diff["added"],
+        "off_commands": n_off_cmds,
+        "off_resources": n_off_res,
+        "agent_md_changed": agent_md_changed,
+        "agent_md_lines": n_agent_lines,
+        "framework_instruction_lines": n_base_lines,
+        "client_reconnect_needed": agent_md_changed or prompts_changed,
+    }
+
+
+@mcp.custom_route("/api/reload", methods=["POST"])
+async def reload_route(request: Request) -> JSONResponse:
+    """Apply state edits to the running server. Localhost only, same trust
+    model as /status and the dashboard: the server binds 127.0.0.1."""
+    report = reload()
+    if "error" in report:
+        return JSONResponse(report, status_code=500)
+    return JSONResponse(report)
+
+
 def _resolve_resource_uri(uri: str) -> str | None:
     """Resolve a resource URI to text content, or None if unrecognised."""
     if uri.startswith("agent://"):
@@ -398,7 +467,7 @@ def _resolve_resource_uri(uri: str) -> str | None:
 
 
 def _ask_resource() -> str:
-    """Build the 'ask' resource: agent.md plus a map of modules and connections."""
+    """Build the 'ask' resource: agent.md plus a map of modules, connections, and agents."""
     config = state.load_gcontext_yaml(PROJECT_DIR)
     agent_name = config.get("name", PROJECT_DIR.name)
     parts = [f"# {agent_name}\n"]
@@ -417,6 +486,13 @@ def _ask_resource() -> str:
     if connections:
         parts.append("## Connections")
         for name, manifest in connections.items():
+            desc = f" - {manifest.description}" if manifest.description else ""
+            parts.append(f"- {name}{desc}")
+        parts.append("")
+    agents = state.discover_agents(PROJECT_DIR)
+    if agents:
+        parts.append("## Agents")
+        for name, manifest in agents.items():
             desc = f" - {manifest.description}" if manifest.description else ""
             parts.append(f"- {name}{desc}")
         parts.append("")

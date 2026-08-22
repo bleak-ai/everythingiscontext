@@ -8,7 +8,8 @@ enters context only when the user invokes it. A command's name is its bare
 file stem with hyphens as underscores when that short name is unique; it
 becomes `<owner>__<command>` (hyphens normalized the same way) when two
 owners collide (all colliders get the prefix) or when the stem matches a
-framework prompt name.
+framework prompt name. A ``names:`` entry in controls.yaml overrides the
+derived name; collisions keep the derived name with a warning.
 
 - `.md` (prompt command): the rendered body is injected into the conversation
   and the agent acts on it. `$name` placeholders are filled from the prompt
@@ -17,7 +18,8 @@ framework prompt name.
   file through the generic `run_script` tool, passing the arguments as
   `params` (which the server turns into `PARAM_<NAME>` environment variables).
 
-Commands are discovered once at server startup; restart to pick up new files.
+Commands are discovered at server startup; `gcontext reload` re-runs the
+discovery on the running server to pick up new files.
 One exception: a `.md` command whose frontmatter declares `each: <glob>` is a
 template. It registers one prompt per state folder the glob matches inside its
 owner, following the same naming rule as file commands (`<stem>_<match>` with
@@ -27,7 +29,7 @@ description and parameters from frontmatter in the matched folder's index.md
 when present (a parameter may declare `default: <value>`, which makes the
 argument optional and is echoed in the appended Arguments line). Templates
 re-expand after every write_file, so a new entry needs only a client
-reconnect, not a server restart.
+reconnect, not a reload.
 """
 
 from __future__ import annotations
@@ -73,9 +75,7 @@ def pinned_resources() -> list[str]:
 
 
 def disabled_commands() -> list[str]:
-    """Sorted keys of commands explicitly set to off in the registry.
-
-    Auto entries (None) are not off; they follow the owner cascade."""
+    """Sorted keys of commands explicitly set to off in the registry."""
     return sorted(k for k, v in _REGISTRY.commands.items() if v is False)
 
 
@@ -103,8 +103,8 @@ def _stable_key_generated(owner: str, template_stem: str, entry_name: str) -> st
 
 
 def _is_disabled(key: str, template_key: str | None = None) -> bool:
-    """Registry check: explicit entry > template entry > owner cascade > on."""
-    return not controls.command_enabled(_REGISTRY, _ROOT, key, template_key)
+    """Registry check: explicit entry > template entry > on."""
+    return not controls.command_enabled(_REGISTRY, key, template_key)
 
 
 def parse_command(text: str) -> tuple[dict[str, Any], str]:
@@ -214,9 +214,30 @@ def _short_name(stem: str) -> str:
     return stem.replace("-", "_")
 
 
+def _override_name(key: str, default: str, source: str | None = None) -> str:
+    """The prompt name for *key*: the names: override (hyphens normalized)
+    when one exists and is free, else *default*. A collision against the
+    caller's own *source* entry is not a collision (re-registration keeps
+    its name). A real collision keeps the default and warns, never drops a
+    command silently."""
+    custom = _REGISTRY.names.get(key)
+    if not custom:
+        return default
+    name = _short_name(custom)
+    if name != default and name in _REGISTERED and _REGISTERED.get(name) != source:
+        print(f"  ! names: {key}: {custom!r} collides with an existing "
+              f"prompt name; keeping {default}", file=sys.stderr)
+        return default
+    return name
+
+
 def _reserved_names() -> set[str]:
-    """Framework prompt names; file commands never take these short names."""
-    return {p.stem for p in discover_framework_prompts()}
+    """Framework prompt names (with names: overrides applied); file commands
+    never take these short names."""
+    return {
+        _override_name(f"framework/{p.stem}", p.stem, source=f"framework/{p.stem}")
+        for p in discover_framework_prompts()
+    }
 
 
 def installed_setup_prompt(server_name: str, module_id: str) -> str:
@@ -308,6 +329,7 @@ def _expand_template(mcp, root: Path, path: Path) -> int:
         short = f"{path.stem}_{match.name}".replace("-", "_")
         name = short if short not in _REGISTERED else _short_name(f"{owner}__{short}")
         gen_key = _stable_key_generated(owner, path.stem, match.name)
+        name = _override_name(gen_key, name, source=str(path))
         if _is_disabled(gen_key, _stable_key(path, root)):
             continue
         entry_meta = _entry_frontmatter(match / "index.md")
@@ -447,13 +469,16 @@ def register_framework_prompts(mcp, root: Path | None = None) -> int:
             continue
         if _is_disabled(f"framework/{path.stem}"):
             continue
+        fkey = f"framework/{path.stem}"
+        name = _override_name(fkey, path.stem, source=fkey)
         meta, body = parse_command(path.read_text(encoding="utf-8"))
         fn = _render_fn(body, meta.get("parameters") or [], extra=extra)
-        fn.__name__ = path.stem
+        fn.__name__ = name
         mcp.add_prompt(
-            Prompt.from_function(fn, name=path.stem, description=meta.get("description", ""))
+            Prompt.from_function(fn, name=name, description=meta.get("description", ""))
         )
-        _STABLE_KEYS[path.stem] = f"framework/{path.stem}"
+        _REGISTERED[name] = fkey
+        _STABLE_KEYS[name] = fkey
         count += 1
     return count
 
@@ -515,15 +540,16 @@ def register_commands(mcp, root: Path) -> int:
             name = _short_name(f"{path.parent.parent.name}__{path.stem}")
         else:
             name = short
+        key = _stable_key(path, root)
+        name = _override_name(key, name, source=str(path))
         if name in _REGISTERED:
             print(f"  ! skipping command {path}: name {name} already "
                   "taken by another command file", file=sys.stderr)
             continue
-        key = _stable_key(path, root)
         if _is_disabled(key):
             continue
         if _register_one(mcp, root, path, name):
-            _STABLE_KEYS[name] = _stable_key(path, root)
+            _STABLE_KEYS[name] = key
             count += 1
     for path in templates:
         count += _expand_template(mcp, root, path)
@@ -531,9 +557,9 @@ def register_commands(mcp, root: Path) -> int:
 
 
 def register_agent_commands(mcp, root: Path, module_name: str) -> int:
-    """Register commands for a single agent or module (e.g. after install or update).
+    """Register commands for a single agent (e.g. after install or update).
 
-    Checks agents/<name>/commands/ first, falls back to modules/<name>/commands/.
+    Reads agents/<name>/commands/ only.
 
     Naming per command file, three branches: a name this file already holds
     is kept (re-registering replaces the prompt in place); otherwise the
@@ -541,8 +567,6 @@ def register_agent_commands(mcp, root: Path, module_name: str) -> int:
     (the generated prompt is evicted, files win at runtime too); otherwise
     the owner-prefixed fallback."""
     commands_dir = root / "agents" / module_name / "commands"
-    if not commands_dir.is_dir():
-        commands_dir = root / "modules" / module_name / "commands"
     if not commands_dir.is_dir():
         return 0
     # Defense in depth: register_commands already seeds these into _REGISTERED.
@@ -558,6 +582,7 @@ def register_agent_commands(mcp, root: Path, module_name: str) -> int:
         short = _short_name(path.stem)
         prefixed = _short_name(f"{module_name}__{path.stem}")
         src = str(path)
+        key = _stable_key(path, root)
         if _REGISTERED.get(prefixed) == src:
             # previously registered prefixed (collision): keep the name stable
             name = prefixed
@@ -569,7 +594,7 @@ def register_agent_commands(mcp, root: Path, module_name: str) -> int:
             name = short
         else:
             name = prefixed
-        key = _stable_key(path, root)
+        name = _override_name(key, name, source=src)
         if _is_disabled(key):
             continue
         if _register_one(mcp, root, path, name):
@@ -581,3 +606,58 @@ def register_agent_commands(mcp, root: Path, module_name: str) -> int:
 
 
 register_module_commands = register_agent_commands
+
+
+def _prompt_names(mcp) -> set[str]:
+    """Names of every prompt currently held by the FastMCP local provider."""
+    from fastmcp.prompts.prompt import Prompt
+
+    return {
+        c.name
+        for c in mcp._local_provider._components.values()
+        if isinstance(c, Prompt)
+    }
+
+
+def reregister_all(mcp, root: Path) -> dict:
+    """Re-run prompt registration on a live FastMCP instance, without
+    duplicates and without leftovers.
+
+    Removes every currently registered prompt (framework, file, and
+    template-generated alike), clears the tracking state, and runs the
+    startup registration again: framework prompts first, then project
+    commands (COMMAND_GLOBS covers connections, modules, and installed
+    agents). Returns a report diffing the prompt name sets:
+    {"framework": n, "project": n, "removed": [names], "added": [names]}.
+    """
+    before = _prompt_names(mcp)
+    for name in before:
+        try:
+            mcp._local_provider.remove_prompt(name)
+        except Exception:
+            pass
+    GENERATED.clear()
+    _REGISTERED.clear()
+    _STABLE_KEYS.clear()
+    n_framework = register_framework_prompts(mcp, root)
+    n_project = register_commands(mcp, root)
+    after = _prompt_names(mcp)
+    return {
+        "framework": n_framework,
+        "project": n_project,
+        "removed": sorted(before - after),
+        "added": sorted(after - before),
+    }
+
+
+def prompt_name_for_key(key: str) -> str | None:
+    """Registered prompt name for a stable key, None when not registered."""
+    for name, k in _STABLE_KEYS.items():
+        if k == key:
+            return name
+    return None
+
+
+def resource_display(key: str, default: str) -> str:
+    """Picker display title for a resource key: names: override or default."""
+    return _REGISTRY.names.get(key, default)

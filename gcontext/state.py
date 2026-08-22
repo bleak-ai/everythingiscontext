@@ -1,4 +1,4 @@
-"""Project state scanning: connections, modules, archive.
+"""Project state scanning: connections, modules, agents, archive.
 
 Everything here is a pure read of the project folder. Nothing is cached and
 nothing is stored: state is computed from the files on every call.

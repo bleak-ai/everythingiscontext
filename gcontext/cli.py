@@ -31,8 +31,9 @@ RESET = "\033[0m"
 
 DEFAULT_PORT = 4242
 
-# The restart rule from docs/setup-script.md: one wording, reused everywhere.
-RESTART_RULE = "Restart the server (stop, `gcontext up`), then reconnect in your client (`/mcp` in Claude Code)."
+# The reload rule from docs/setup-script.md: one wording, reused everywhere.
+RESTART_RULE = ("Run `gcontext reload`, then reconnect in your client (`/mcp` in Claude Code) "
+                "if it reports a reconnect is needed. If the server is stopped: `gcontext up`.")
 
 STATUS_COLOR = {
     "loaded": GREEN,
@@ -62,8 +63,8 @@ INIT_INSTRUCTIONS = """\
 
 Describe what this agent is for and how it should behave. This file is yours;
 gcontext pushes it to every runtime that connects, right after its own fixed
-framework instructions (which already cover the tools, connections, and
-modules).
+framework instructions (which already cover the tools, connections,
+modules, and agents).
 """
 
 INIT_SECRETS = """\
@@ -97,12 +98,17 @@ The server prints a URL and the one-line command to connect your client
 (Claude Code, Claude Desktop, Codex, Cursor). The client does the reasoning;
 this folder is the memory.
 
-What's here: `agent.md` is the agent's definition, pushed to every client at
-connect. `connections/` holds the services it can use, `agents/` the autonomous
-actors installed from the registry, `modules/` accumulated knowledge by topic,
-`archive/` retired state. `secrets.env` holds secret values; it is gitignored
-and never leaves this machine, so after cloning, recreate it from the NAMEs
-each connection.yaml declares.
+Three ideas cover the folder:
+
+- Memory: the agent's files. `agent.md` is its definition, pushed to every
+  client at connect; `modules/` holds knowledge by topic; `archive/` holds
+  retired state; installed agents live in `agents/` and bring their own
+  commands.
+- Reach: `connections/` holds the services the agent can use; `secrets.env`
+  holds the secret values. It is gitignored and never leaves this machine,
+  so after cloning, recreate it from the NAMEs each connection.yaml declares.
+- Steering: commands (slash commands in your client) and resources (state
+  files you attach to a message).
 """
 
 def cmd_init(args):
@@ -140,7 +146,9 @@ def cmd_init(args):
     print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} created {name}")
     print(f"{DIM}State: {target}{RESET}")
     print()
-    print("The folder IS your agent's state: version it with git, edit it freely.")
+    print("The folder is the agent's Memory: plain files, version it with git, edit it freely.")
+    print("Reach (connections plus secrets) and Steering (commands and resources) come next:")
+    print("the setup command builds them with you.")
     if os.environ.get("GCONTEXT_TELEMETRY") != "0":
         print(f"{DIM}Sent anonymous install event. Disable with GCONTEXT_TELEMETRY=0{RESET}")
     print()
@@ -149,8 +157,6 @@ def cmd_init(args):
     print(f"  1. {f'gcontext up {args.directory}':<{pad}}  start the server")
     print(f"  2. {'connect your client':<{pad}}  the up banner prints the exact command per client")
     print(f"  3. {f'run /mcp__{name}__setup':<{pad}}  in the client: describe what the agent should do, it builds the rest")
-    print()
-    print(f"{DIM}See what reaches the agent, anytime: gcontext context {args.directory}{RESET}")
 
 
 def find_project_dir(path: str | None) -> Path:
@@ -222,6 +228,75 @@ def fetch_status(port: int) -> dict | None:
         return None
 
 
+def post_reload(port: int) -> dict | None:
+    """POST /api/reload on the running server. None means nothing is listening."""
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/reload", method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read())
+        except ValueError:
+            return {"error": f"server returned HTTP {e.code}"}
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def format_reload_report(report: dict) -> list[str]:
+    """Render the /api/reload report in the house style. Pure, for tests."""
+    if report.get("error"):
+        return [
+            f"Error: {report['error']}",
+            "The server kept its previous state. Fix the file and run gcontext reload again.",
+        ]
+    lines = [
+        f"Reloaded: {report.get('framework_prompts', 0)} built-in + "
+        f"{report.get('project_commands', 0)} project command(s) re-registered."
+    ]
+    if report.get("removed"):
+        lines.append(f"Removed: {', '.join(report['removed'])}")
+    if report.get("added"):
+        lines.append(f"Added: {', '.join(report['added'])}")
+    if report.get("agent_md_changed"):
+        lines.append("agent.md: reloaded, delivered to clients at their next connect.")
+    server_version = report.get("version")
+    if server_version and server_version != __version__:
+        lines.append(
+            f"Warning: the server runs gcontext {server_version} but "
+            f"{__version__} is installed. A full restart is required to run "
+            "the installed version (stop, gcontext up)."
+        )
+    if report.get("client_reconnect_needed"):
+        lines.append("Reconnect your client to pick this up (/mcp in Claude Code).")
+    else:
+        lines.append("Live now.")
+    return lines
+
+
+def cmd_reload(args):
+    project_dir = find_project_dir(args.project)
+    port = resolve_port(args, project_dir)
+    live = fetch_status(port)
+    if live is None:
+        print(f"Server not running. Start it: gcontext up {args.project or '.'}", file=sys.stderr)
+        sys.exit(1)
+    if live.get("project_dir") != str(project_dir.resolve()):
+        print(f"Error: port {port} is serving a different project "
+              f"({live.get('name', '?')} at {live.get('project_dir', '?')}).", file=sys.stderr)
+        sys.exit(1)
+    report = post_reload(port)
+    if report is None:
+        print(f"Server not running. Start it: gcontext up {args.project or '.'}", file=sys.stderr)
+        sys.exit(1)
+    for line in format_reload_report(report):
+        print(line)
+    if report.get("error"):
+        sys.exit(1)
+
+
 def cmd_up(args):
     project_dir = find_project_dir(args.project)
     server.PROJECT_DIR = project_dir
@@ -281,21 +356,29 @@ def cmd_up(args):
     print("  Details:         gcontext connect")
     print()
     if n_instruction_lines:
-        print(f"Instructions: framework ({n_base_lines} lines) + agent.md ({n_instruction_lines} lines), pushed to every agent at connect.")
+        print(f"Memory: framework instructions ({n_base_lines} lines) + agent.md ({n_instruction_lines} lines), pushed to every client at connect.")
     else:
-        print(f"{YELLOW}Instructions: no agent.md, agents receive only the framework instructions ({n_base_lines} lines) at connect.{RESET}")
+        print(f"{YELLOW}Memory: no agent.md, clients receive only the framework instructions ({n_base_lines} lines) at connect.{RESET}")
+    n_connections = len(state.load_connections(project_dir))
+    if n_connections:
+        print(f"Reach: {n_connections} connection(s); check their secrets with gcontext status.")
+    else:
+        print("Reach: no connections yet; the setup command adds them.")
+    n_agents = len(state.discover_agents(project_dir))
+    if n_agents:
+        print(f"Agents: {n_agents} installed")
     builtin_names = ", ".join(p.stem for p in commands_mod.discover_framework_prompts())
-    prompt_bits = [f"{n_framework_prompts} built-in ({builtin_names})"]
+    prompt_bits = [f"{n_framework_prompts} built-in commands ({builtin_names})"]
     if n_commands:
         prompt_bits.append(f"{n_commands} project command(s)")
     if n_off_cmds:
         prompt_bits.append(f"{n_off_cmds} off in controls.yaml")
-    print(f"Prompts: {' + '.join(prompt_bits)} as MCP prompts (slash commands in Claude Code).")
+    print(f"Steering: {' + '.join(prompt_bits)}, slash commands in your client.")
     if n_off_res:
         print(f"Resources: {n_off_res} off in controls.yaml "
               "(unlisted, still readable via read_file).")
     print()
-    print("Connections appear below as clients attach. Ctrl+C stops the server,")
+    print("Clients appear below as they connect. Ctrl+C stops the server,")
     print("and every client cleanly loses access.")
     print()
     print("Next: connect your client with the command above (already connected: /mcp to reconnect).")
@@ -341,9 +424,9 @@ def cmd_status(args):
             print(f"  {GREEN}{s['client']}{RESET} {DIM}{s['version']}{RESET}  connected {s['connected']}  last activity {s['last_seen']}")
         stale = live.get("stale") or {}
         if stale.get("agent_md"):
-            print(f"  {YELLOW}agent.md changed since server start; restart to push the new version{RESET}")
+            print(f"  {YELLOW}agent.md changed since server start; run gcontext reload to push the new version{RESET}")
         if stale.get("commands"):
-            print(f"  {YELLOW}commands changed since server start; restart to re-register them{RESET}")
+            print(f"  {YELLOW}commands changed since server start; run gcontext reload to re-register them{RESET}")
         needs_restart = bool(stale.get("agent_md") or stale.get("commands"))
     print()
 
@@ -497,12 +580,11 @@ def cmd_add(args):
     up_dir = args.project or "."
     print()
     print("Next steps:")
-    print("  1. Stop the server (Ctrl-C).")
-    print(f"  2. Start it again: gcontext up {up_dir}")
-    print("  3. Reconnect in your client: type /mcp in Claude Code.")
+    print(f"  1. Apply it: gcontext reload (server not running: gcontext up {up_dir})")
+    print("  2. Reconnect in your client: type /mcp in Claude Code.")
     if (project_dir / rel / "commands" / "setup.md").exists():
         setup_cmd = commands_mod.installed_setup_prompt(server_name, result["id"])
-        print(f"  4. Run the setup: {setup_cmd}")
+        print(f"  3. Run the setup: {setup_cmd}")
 
 
 def cmd_remove(args):
@@ -512,10 +594,8 @@ def cmd_remove(args):
 
     agent_dir = project_dir / "agents" / agent_id
     if not agent_dir.is_dir():
-        agent_dir = project_dir / "modules" / agent_id
-        if not agent_dir.is_dir():
-            print(f"Error: agent '{agent_id}' not found in agents/ or modules/.", file=sys.stderr)
-            sys.exit(1)
+        print(f"Error: agent '{agent_id}' not found in agents/.", file=sys.stderr)
+        sys.exit(1)
 
     manifest = registry_mod.read_manifest(agent_dir)
     if manifest is None:
@@ -587,7 +667,7 @@ def cmd_remove(args):
         print(f"Removed {agent_id}.")
 
     print()
-    print(f"Commands from {agent_id} are gone after a server restart.")
+    print(f"Commands from {agent_id} are gone after a reload.")
     print(RESTART_RULE)
 
 
@@ -712,12 +792,16 @@ def validate_template(folder: Path) -> dict:
 
     runs = folder / "runs"
     if runs.is_dir():
+        # Templates ship the fabricated example run plus an index.md that
+        # maps the folder; real run folders never ship.
         offenders = sorted(
             p.name for p in runs.iterdir()
-            if not p.name.startswith(".") and not (p.name == "example" and p.is_dir())
+            if not p.name.startswith(".")
+            and not (p.name == "example" and p.is_dir())
+            and not (p.name == "index.md" and p.is_file())
         )
         if offenders:
-            print(f"Error: runs/ may contain only the example/ folder; found: {', '.join(offenders)}.", file=sys.stderr)
+            print(f"Error: runs/ may contain only the example/ folder and an index.md; found: {', '.join(offenders)}.", file=sys.stderr)
             sys.exit(1)
 
     setup_path = folder / "commands" / "setup.md"
@@ -733,8 +817,11 @@ def validate_template(folder: Path) -> dict:
         first_line = next((ln.strip() for ln in setup_body.splitlines() if ln.strip()), "")
         heading = re.match(r"^#\s+(.*)$", first_line)
         if heading:
+            # A plain title (like "# Setup") is allowed; only an actual
+            # greeting is dialogue, which the framework owns
+            # (docs/setup-script.md).
             text = heading.group(1).strip()
-            if text == "Setup" or text.startswith("Welcome"):
+            if text.startswith("Welcome"):
                 print(
                     "Error: commands/setup.md opens with a greeting heading. "
                     "setup.md supplies steps only; the framework owns the dialogue "
@@ -743,28 +830,13 @@ def validate_template(folder: Path) -> dict:
                 )
                 sys.exit(1)
 
-    from .fs import _index_siblings, index_format_issues, INDEX_SHAPE
-
-    for child_index in sorted(folder.rglob("index.md")):
-        rel_parts = child_index.relative_to(folder).parts
-        if any(p.startswith(".") or p.startswith("__") for p in rel_parts):
-            continue
-        siblings = _index_siblings(child_index.parent)
-        if child_index.parent == folder:
-            # README.md at the agent root documents the agent on GitHub;
-            # the registry build excludes it from installs, so the map
-            # must not list it.
-            siblings = [n for n in siblings if n != "README.md"]
-        issues = index_format_issues(
-            child_index.read_text(encoding="utf-8"),
-            siblings,
-        )
-        if issues:
-            rel = "/".join(rel_parts)
-            for issue in issues:
-                print(f"Error: {rel}: {issue}.", file=sys.stderr)
-            print(f"Error: {INDEX_SHAPE}", file=sys.stderr)
-            sys.exit(1)
+    # No strict index-shape sweep here: the agent template standard defines
+    # its own index formats (root index.md with Entry points and Contents
+    # sections, run index.md with a status table, steps/index.md as a step
+    # map). Per docs/agents.md, the only code-enforced requirement beyond
+    # the checks above is index.md with valid frontmatter; the state-folder
+    # index shape (fs.index_format_issues) applies to live state folders,
+    # not to distributed templates.
 
     return meta
 
@@ -833,7 +905,7 @@ def cmd_update(args):
         print("Backed-up files saved as <name>.pre-update. Review and merge your changes.")
     if report.get("commands_changed"):
         print()
-        print("Commands changed: restart the server to re-register them (stop, gcontext up, reconnect the client).")
+        print("Commands changed: run gcontext reload to re-register them, then reconnect the client (/mcp in Claude Code).")
 
 
 def cmd_search(args):
@@ -877,6 +949,9 @@ def main():
     status_parser = subparsers.add_parser("status", help="Server up? Who is connected? Plus connections, secrets, modules")
     add_common(status_parser)
 
+    reload_parser = subparsers.add_parser("reload", help="Apply agent.md, command, and controls.yaml edits to the running server")
+    add_common(reload_parser)
+
     connect_parser = subparsers.add_parser("connect", help="Show how to point a client at the server URL")
     connect_parser.add_argument(
         "client",
@@ -914,6 +989,7 @@ def main():
         "init": cmd_init,
         "up": cmd_up,
         "status": cmd_status,
+        "reload": cmd_reload,
         "connect": cmd_connect,
         "context": cmd_context,
         "add": cmd_add,

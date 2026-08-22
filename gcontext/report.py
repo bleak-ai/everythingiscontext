@@ -1,6 +1,6 @@
 """The code-built reports: Block 1 of docs/setup-script.md, computed from state.
 
-build_setup_report scans modules/ for agents (modules whose index.md
+build_setup_report scans agents/ for agents (entries whose index.md
 frontmatter declares a `connections:` list), matches each declared kind
 against the connection.yaml files under connections/, and renders the text
 the setup prompt shows verbatim. build_explain_report renders the explain
@@ -35,26 +35,24 @@ def _available_kinds(project_dir: Path) -> set[str]:
 def _agents(project_dir: Path) -> list[tuple[str, dict, list, Path]]:
     """(id, frontmatter, declared connections, path) per agent module, sorted."""
     agents = []
-    for folder_name in ("agents", "modules"):
-        scan_dir = project_dir / folder_name
-        if not scan_dir.is_dir():
+    scan_dir = project_dir / "agents"
+    if not scan_dir.is_dir():
+        return agents
+    for item in sorted(scan_dir.iterdir()):
+        if not item.is_dir():
             continue
-        for item in sorted(scan_dir.iterdir()):
-            if not item.is_dir():
-                continue
-            index = item / "index.md"
-            if not index.is_file():
-                continue
-            try:
-                meta, _ = parse_command(index.read_text(encoding="utf-8"))
-            except (ValueError, OSError, yaml.YAMLError):
-                continue
-            declared = meta.get("connections")
-            if not isinstance(declared, list) or not declared:
-                continue
-            agent_id = meta.get("id") or item.name
-            if not any(a[0] == agent_id for a in agents):
-                agents.append((agent_id, meta, declared, item))
+        index = item / "index.md"
+        if not index.is_file():
+            continue
+        try:
+            meta, _ = parse_command(index.read_text(encoding="utf-8"))
+        except (ValueError, OSError, yaml.YAMLError):
+            continue
+        declared = meta.get("connections")
+        if not isinstance(declared, list) or not declared:
+            continue
+        agent_id = meta.get("id") or item.name
+        agents.append((agent_id, meta, declared, item))
     return agents
 
 

@@ -10,10 +10,11 @@ below, in order. No free sentences between blocks, no greeting, no filler
 ("Great!", "Perfect!"), no apology, no hedging. Short sentences, active
 voice, plain words.
 
-Jargon rule: toward the user, the only gcontext words are "agent" and
-"connection". Module, state folder, manifest, frontmatter, and every other
-internal word gets a plain paraphrase ("the agent's files", "its notes").
-Internal terms below are instructions for you, never words for the user.
+Jargon rule: toward the user, the only gcontext words are "agent",
+"connection", "command", and "resource". Module, state folder, manifest,
+frontmatter, and every other internal word gets a plain paraphrase ("the
+agent's files", "its notes"). Internal terms below are instructions for
+you, never words for the user.
 
 ## Block 1: the report
 
@@ -31,7 +32,7 @@ listed agent, a free answer always possible. Use AskUserQuestion when the
 runtime has it; plain text otherwise. One question, nothing else. If the
 list has exactly one agent, take it without asking. When the user answers,
 re-invoke this reasoning with that agent: read its files
-(modules/<name>/index.md) and continue with Block 3 as if the per-agent
+(agents/<name>/index.md) and continue with Block 3 as if the per-agent
 report had been shown for it.
 
 If the report says "No agents installed.", skip Block 3 and close with
