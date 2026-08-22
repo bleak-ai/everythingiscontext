@@ -1,6 +1,6 @@
 # Agents
 
-An agent is a module with a fixed shape. Every agent lives in `modules/` as a module, but not every module is an agent: a module is any folder of files that holds accumulated knowledge on a topic; an agent is a module that follows the specific structure defined here (frontmatter manifest, steps/, runs/). It is a series of steps the AI executes with judgment, where every run leaves a persistent trace on disk. The agent remembers what happened last run, accumulates knowledge, and gets better over time. A skill or prompt runs and forgets; an agent holds state.
+An agent is a module with a fixed shape, installed into its own home: every installed agent lives in the top-level `agents/` folder, while `modules/` holds accumulated knowledge. A module is any folder of files on a topic; an agent follows the specific structure defined here (frontmatter manifest, steps/, runs/). It is a series of steps the AI executes with judgment, where every run leaves a persistent trace on disk. The agent remembers what happened last run, accumulates knowledge, and gets better over time. A skill or prompt runs and forgets; an agent holds state.
 
 This document is the template spec: the contract an agent folder must follow to be distributable. The CLI (`gcontext add`), the site directory, and the authoring tooling all build against it. It is one standard for all agents; there are no per-domain variants.
 
@@ -80,7 +80,7 @@ Field notes:
 - `parameters` are slots, not values. The setup interview or the run start binds them. Never ship bound values.
 - `connections` entries are structured (`kind` plus `description`) so the site can render them as requirement badges. They name capability kinds, not products; the valid `kind` values are the fixed enum in docs/setup-script.md. The body of `index.md` may mention concrete services as examples; the steps must not depend on one (see docs/modules.md on connection-agnostic modules). The agent maps kinds to its own `connections/` at run time.
 - `connections[].examples` is optional: a list of product names (Linear, Jira, GitHub Issues) shown on the site for that connection, without binding the agent to any one of them.
-- `agents` is optional: a list of concrete registry agent ids this agent requires. Unlike connections, entries name a specific agent, not a capability: the dependency is on that agent's files and commands. Install resolves the list recursively and installs what is missing; an id already present under `modules/` is satisfied. The site renders each entry as a Requires badge. A declared dependency may be named directly in the steps; the rule is "name nothing you have not declared" (see docs/modules.md).
+- `agents` is optional: a list of concrete registry agent ids this agent requires. Unlike connections, entries name a specific agent, not a capability: the dependency is on that agent's files and commands. Install resolves the list recursively and installs what is missing; an id already present under `agents/` is satisfied. The site renders each entry as a Requires badge. A declared dependency may be named directly in the steps; the rule is "name nothing you have not declared" (see docs/modules.md).
 - `flow` is an ordered list of short strings: the agent's loop as the user experiences it, one line per beat, typically 4 to 6 entries. Each entry says what the user does or what the agent does back, in plain words, no internal vocabulary. The explain command renders it as the numbered Flow section and walks it step by step. Required: the validator (`gcontext share`) rejects templates without it.
 - `learns` is optional prose describing what the agent accumulates over time (playbooks, quirks of the user's instance). It renders as the Learns section on the site. Omit it when the agent has nothing to say here.
 - `tags` is a flat list for the directory. Keep it short.
@@ -146,15 +146,16 @@ Ships in the template:
 - `commands/run.md`, and `commands/setup.md` when the agent has one
 - `functions/` when the agent has them
 - `runs/example/`: the example run
+- `runs/index.md` when the agent ships a map of the runs folder; nothing else may sit directly in `runs/`
 
 Never ships, generated locally at setup and use:
 
 - the user's own run folders in `runs/`
 - every personalized file: configs, credentials references, scripts bound to the user's systems, playbooks learned from the user's own work
 
-On install, `gcontext add` writes a `.template.yaml` file inside the module. It records per-file SHA256 hashes of every shipped file, the registry source, and the install ref. This manifest is hidden from `list_dir`, `grep`, and resource listings (same policy as `.git`), but stays readable by explicit path. `gcontext update <id>` (or the `agent` tool's update action) uses it to pull upstream changes without touching personalized files: unchanged-locally files get the upstream version, locally-modified files are kept, files changed on both sides get the upstream version written as `<file>.new` for the agent to merge. Your runs, insights, and personal state are never in the manifest and are never touched.
+On install, `gcontext add` writes a `.installed` manifest file inside the agent folder (`agents/<id>/`). It records per-file SHA256 hashes of every shipped file, the registry source, and the install ref. This manifest is hidden from `list_dir`, `grep`, and resource listings (same policy as `.git`), but stays readable by explicit path. `gcontext update <id>` (or the `agent` tool's update action) uses it to pull upstream changes without touching personalized files: unchanged-locally files get the upstream version, locally-modified files are kept, files changed on both sides get the upstream version written as `<file>.new` for the agent to merge. Your runs, insights, and personal state are never in the manifest and are never touched.
 
-`gcontext add` on an existing module warns and stops instead of overwriting.
+`gcontext add` on an already installed agent warns and stops instead of overwriting.
 
 ## The example run
 
@@ -205,4 +206,4 @@ Authors turn a lived agent into a template with the share-agent instructions: do
 
 ## Relation to modules
 
-An agent is a module (see docs/modules.md): installed into `modules/`, connection-agnostic, growing with use. The agent spec adds the fixed shape on top: manifest frontmatter, `steps/`, `runs/`, the setup contract, the example run. Everything modules.md says about growth and portability applies unchanged.
+An agent is a module in spirit (see docs/modules.md): connection-agnostic and growing with use, but installed into its own top-level `agents/` folder, not into `modules/`. The agent spec adds the fixed shape on top: manifest frontmatter, `steps/`, `runs/`, the setup contract, the example run. Everything modules.md says about growth and portability applies unchanged.

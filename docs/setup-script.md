@@ -50,25 +50,24 @@ Every surface ends with one line that starts with `Next:` and names exactly one 
 Next: run /mcp__my-agent__setup to finish the interview.
 ```
 
-Exception: the `gcontext add` post-install output closes with a `Next steps:` numbered block instead (see the restart rule below). It addresses a human at a terminal, and the restart plus setup sequence is more than one action.
+Exception: the `gcontext add` post-install output closes with a `Next steps:` numbered block instead (see the reload rule below). It addresses a human at a terminal, and the reload plus setup sequence is more than one action.
 
-## The restart rule
+## The reload rule
 
-One wording, reused everywhere a restart is needed in agent-facing text:
+One wording, reused everywhere a reload is needed in agent-facing text:
 
-"Restart the server (stop, `gcontext up`), then reconnect in your client (`/mcp` in Claude Code)."
+"Run `gcontext reload`, then reconnect in your client (`/mcp` in Claude Code) if it reports a reconnect is needed. If the server is stopped: `gcontext up`."
 
 The `gcontext add` CLI output uses the numbered form instead:
 
 ```
 Next steps:
-  1. Stop the server (Ctrl-C).
-  2. Start it again: gcontext up <dir>
-  3. Reconnect in your client: type /mcp in Claude Code.
-  4. Run the setup: /mcp__<server>__<module>__setup
+  1. Apply it: gcontext reload (server not running: gcontext up <dir>)
+  2. Reconnect in your client: type /mcp in Claude Code.
+  3. Run the setup: /mcp__<server>__<module>__setup
 ```
 
-Step 4 appears only when the installed agent ships `commands/setup.md`. The printed command is the owner-prefixed name ("setup" is a reserved framework stem), copy-pasteable, no backticks.
+Step 3 appears only when the installed agent ships `commands/setup.md`. The printed command is the owner-prefixed name ("setup" is a reserved framework stem), copy-pasteable, no backticks.
 
 ## Tone rules
 
@@ -97,8 +96,9 @@ All four banners (`init`, `add`, `up`, `status`) share one structure:
 
 ## Connection kinds
 
-`connections` entries in an agent manifest name a capability, not a transport and not a product. The kind values are a fixed enum, checked by the validator:
+`connections` entries in an agent manifest name a capability, not a transport and not a product. The kind values are a fixed enum, checked by the validator. This list is the single documented home of the enum; the code lives in `gcontext/kinds.py`, and a package test asserts the two stay equal.
 
+<!-- kind-enum:start -->
 - `ticket-tracker`
 - `product-api`
 - `keyword-source`
@@ -107,5 +107,7 @@ All four banners (`init`, `add`, `up`, `status`) share one structure:
 - `package-registry`
 - `deploy-target`
 - `notification-sink`
+- `scheduler`
+<!-- kind-enum:end -->
 
-New kinds enter by editing this list.
+New kinds enter by editing this list and `gcontext/kinds.py` in the same change.

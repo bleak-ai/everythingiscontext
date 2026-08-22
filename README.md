@@ -4,7 +4,7 @@
 
 # gcontext
 
-A framework for building stateful agents. An agent is a folder of plain files (instructions, connections, secrets, knowledge modules, scripts) served over MCP by a local HTTP server. Runtimes (Claude Code, Desktop, Codex, Cursor) connect to the URL and do the reasoning; gcontext keeps the state.
+A framework for building stateful agents. An agent is a folder of plain files (instructions, connections, secrets, knowledge modules, scripts) served over [MCP](docs/mcp.md) by a local HTTP server. Runtimes (Claude Code, Desktop, Codex, Cursor) connect to the URL and do the reasoning; gcontext keeps the state.
 
 ## Table of Contents
 
@@ -12,9 +12,10 @@ A framework for building stateful agents. An agent is a folder of plain files (i
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [The folder](#the-folder)
-- [Your first connection](#your-first-connection)
+- [Memory](#memory)
+- [Reach](#reach)
+- [Steering](#steering)
 - [CLI](#cli)
-- [Agents](#agents)
 - [Going further](#going-further)
 - [Scope](#scope)
 - [License](#license)
@@ -30,7 +31,6 @@ A framework for building stateful agents. An agent is a folder of plain files (i
 - **Scripts** - `run_script` for saved procedures, `run_adhoc_script` for one-off code, both with secret injection and output scrubbing
 - **Commands** - markdown or Python files that register as slash commands in your client
 - **Dashboard** - read-only web UI with file browser, connection status, and live activity feed
-- **Context ledger** - `gcontext context` lists every channel through which context reaches the agent, so you always know what it sees
 - **Installable agents** - `gcontext add <id>` installs a pre-built agent from the [registry](https://github.com/bleak-ai/agents)
 
 ## Install
@@ -76,16 +76,29 @@ my-agent/
       index.md           # API notes, usage patterns
 
   modules/               # accumulated knowledge
+  agents/                # installed agents from the registry (gcontext add)
   archive/               # excluded from scanning, still readable
 ```
 
-Markdown holds the context, YAML holds the config. Edit any of it with a text editor; the server reads the files on demand, so changes apply immediately. Two exceptions load at server start and need a restart to pick up edits: `agent.md` and command files.
+Markdown holds the context, YAML holds the config. Edit any of it with a text editor; the server reads the files on demand, so most changes apply immediately. The exceptions (`agent.md` and command files) are handled by `gcontext reload`; the full table of which change needs a reload or a client reconnect is in [docs/using.md](docs/using.md#what-needs-a-reload-what-needs-a-reconnect).
 
-At connect, every agent receives two layers of instructions: gcontext's fixed instructions (shipped with the package, they explain the tools and folder conventions), then your `agent.md` (what this particular agent is). You only ever write the second layer.
+Three ideas cover everything in this folder: Memory (the agent's files), Reach (the services it can use), Steering (how you direct it from your client).
 
-Connected clients get seven tools: `read_file`, `write_file`, `list_dir`, `grep`, `run_script`, `run_adhoc_script`, `agent`. Every state file is also exposed as an MCP resource at `gcontext://<path>`, so runtimes that support resource mentions can attach a file directly, e.g. `@my-agent:gcontext://modules/topic/index.md`.
+## Memory
 
-## Your first connection
+Everything the agent knows is a plain file in this folder. `agent.md` is its definition, pushed to every client at connect: gcontext sends its own fixed instructions first (they explain the tools and folder conventions), then your `agent.md`; you only ever write the second layer. `modules/` holds accumulated knowledge, one folder per topic, growing as the agent works. `archive/` holds retired state: skipped when scanning, still readable. Installed agents (`gcontext add <id>`, from the [registry](https://github.com/bleak-ai/agents)) live in `agents/` as more files of the same kind, and bring their own commands.
+
+Because memory is files, it persists across sessions and clients. Try it in Claude Code:
+
+```
+Remember that our API rate limit is 60 requests per minute.
+```
+
+The agent writes that into a module file. A new session, even in a different client, reads it back.
+
+## Reach
+
+A connection gives the agent a service it can use: a folder under `connections/` plus the secret names it needs. The values live in `secrets.env`, are injected into scripts at runtime, and are scrubbed from output; the agent uses the key but never sees it.
 
 `init` creates no connections: a connection is worth having when it points at a service you actually use. Adding one is three files, no command needed:
 
@@ -112,9 +125,33 @@ echo 'STRIPE_API_KEY=sk_test_...' >> my-agent/secrets.env
 
 And write `connections/stripe/index.md`: what the service is for, which endpoints matter, any usage patterns worth remembering. The agent reads this before writing scripts, and updates it as it learns.
 
-That's it. The server picks the connection up on the next tool call (no restart), `gcontext status` shows whether every declared secret has a value, and the agent can now call the API through `run_adhoc_script` and `run_script` without ever seeing the key.
+That's it. The server picks the connection up on the next tool call (no restart), `gcontext status` shows whether every declared secret has a value, and the agent can now use the service. In Claude Code:
+
+```
+List the last three Stripe test payments.
+```
 
 The full reference is in [docs/connections.md](docs/connections.md).
+
+## Steering
+
+Two ways to direct a connected agent, both typed in your client.
+
+**Commands** are markdown or Python files under a `commands/` folder inside a connection, module, or installed agent. Each registers as a slash command in Claude Code. The one every new project has is setup:
+
+```
+/mcp__my-agent__setup
+```
+
+Installed agents bring their own commands; after `gcontext add <id>` they show up the same way.
+
+**Resources** attach a state file to your message, so its content is in front of the agent before it starts. Every state file is one; in Claude Code the mention form is:
+
+```
+@my-agent:gcontext://modules/topic/index.md
+```
+
+The day-to-day details of both are in [docs/using.md](docs/using.md).
 
 ## CLI
 
@@ -123,6 +160,7 @@ The full reference is in [docs/connections.md](docs/connections.md).
 | `gcontext init <dir>` | Scaffold a new state folder |
 | `gcontext up [dir]` | Serve the folder over MCP |
 | `gcontext status [dir]` | Server state, connected clients, state overview |
+| `gcontext reload [dir]` | Apply agent.md, command, and controls.yaml edits to the running server |
 | `gcontext connect [client]` | Connection steps for claude, desktop, codex, cursor |
 | `gcontext add <id>` | Install an agent from the [registry](https://github.com/bleak-ai/agents) or from any public GitHub repo URL |
 | `gcontext update <id>` | Update an installed agent (three-way merge, keeps your local changes) |
@@ -130,26 +168,31 @@ The full reference is in [docs/connections.md](docs/connections.md).
 | `gcontext share <path>` | Validate an agent folder and print the steps to submit it to the registry |
 | `gcontext context [dir]` | Print the context ledger |
 
-## Agents
-
-Pre-built agents live in the [bleak-ai/agents](https://github.com/bleak-ai/agents) registry. Install one with:
-
-```bash
-gcontext add <agent-id>
-```
-
-This copies the agent's modules, connections, and commands into your state folder. Agents that depend on other agents are resolved recursively. To create and share your own agent, see [docs/share-agent.md](docs/share-agent.md).
-
 ## Going further
 
-- [examples/ops-agent](examples/ops-agent) - a complete agent folder with connections, modules, a command, and an archived module
-- [docs/design.md](docs/design.md) - why gcontext is built this way, decision by decision
+- [docs/using.md](docs/using.md) - the day-to-day guide: invoking commands, attaching files, reload vs reconnect, template commands, installing agents
+- [docs/mcp.md](docs/mcp.md) - the Model Context Protocol in one page
 - [docs/connections.md](docs/connections.md) - the connection reference, from manifest fields to smoke tests
+- [docs/troubleshooting.md](docs/troubleshooting.md) - symptoms, exact error texts, and fixes
+- [examples/ops-agent](examples/ops-agent) - a complete agent folder with connections, modules, a command, and an archived module
+
+### Advanced
+
+Needed only in specific situations; each page or section opens with when.
+
+- [docs/reference.md](docs/reference.md) - secrets handling, the command file format, dashboard, archiving
+- [docs/reference.md#controls](docs/reference.md#controls) - controls.yaml, the on/off registry for commands and resources, plus pinned files
+- [docs/reference.md#context-ledger](docs/reference.md#context-ledger) - list every channel through which context reaches the agent
+- [docs/using.md#template-commands](docs/using.md#template-commands) - one command file that registers a slash command per matching folder
+- [docs/reference.md#controlled-session](docs/reference.md#controlled-session) - a claude session with the runtime-owned context pipes closed
+- [docs/tools.md](docs/tools.md) - the seven tools an attached agent works with, described one by one
+
+### For agent authors
+
 - [docs/modules.md](docs/modules.md) - writing portable, shareable modules
 - [docs/agents.md](docs/agents.md) - the agent template standard for distributable agents
 - [docs/setup-script.md](docs/setup-script.md) - the setup script standard, every text a user reads during install and setup
-- [docs/share-agent.md](docs/share-agent.md) - turning a lived agent into a shareable template
-- [docs/reference.md](docs/reference.md) - secrets, commands, dashboard, archiving, context ledger, controlled sessions
+- [docs/design.md](docs/design.md) - why gcontext is built this way, decision by decision
 
 ## Scope
 

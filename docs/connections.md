@@ -26,9 +26,9 @@ deps:                         # Python packages the scripts import
 ```
 
 `kind` declares the capability type of the connection. The framework
-validates it against a fixed enum. Valid values: `ticket-tracker`,
-`product-api`, `keyword-source`, `browser`, `source-control`,
-`package-registry`, `deploy-target`, `notification-sink`. Agent manifests
+validates it against the fixed set enforced by `gcontext/kinds.py` and
+documented in [docs/setup-script.md](setup-script.md#connection-kinds),
+for example `ticket-tracker` or `browser`. Agent manifests
 reference connections by kind, not by product name, so the kind is what
 links a connection to an agent's requirements.
 
