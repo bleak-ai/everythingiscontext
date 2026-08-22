@@ -107,36 +107,33 @@ def test_command_enabled_chain(tmp_path):
     _make_state(tmp_path)
     reg = controls.Registry(
         commands={
-            "bot/setup": True,          # explicit on under off owner: stays live
-            "api/ping": False,          # explicit off under on owner
+            "bot/setup": True,          # explicit on
+            "api/ping": False,          # explicit off
             "bot/profile": True,        # template entry
             "bot/profile_reddit": False,  # per-entry override beats template
         },
         resources={"modules/bot": False, "connections/api": True},
     )
-    root = tmp_path
-    # explicit entries win over everything
-    assert controls.command_enabled(reg, root, "bot/setup") is True
-    assert controls.command_enabled(reg, root, "api/ping") is False
+    # explicit entries win
+    assert controls.command_enabled(reg, "bot/setup") is True
+    assert controls.command_enabled(reg, "api/ping") is False
     # generated entry: per-entry override > template entry
     assert controls.command_enabled(
-        reg, root, "bot/profile_reddit", template_key="bot/profile") is False
+        reg, "bot/profile_reddit", template_key="bot/profile") is False
     assert controls.command_enabled(
-        reg, root, "bot/profile_other", template_key="bot/profile") is True
-    # unlisted command under an off owner: cascade disables it
-    assert controls.command_enabled(reg, root, "bot/unlisted") is False
-    # unlisted command under an on owner, and under an unlisted owner: on
-    assert controls.command_enabled(reg, root, "api/unlisted") is True
-    assert controls.command_enabled(reg, root, "crafter/run") is True
-    # framework: no owner folder, no cascade, default on
-    assert controls.command_enabled(reg, root, "framework/setup") is True
+        reg, "bot/profile_other", template_key="bot/profile") is True
+    # unlisted command: no cascade, default on regardless of owner resource
+    assert controls.command_enabled(reg, "bot/unlisted") is True
+    assert controls.command_enabled(reg, "api/unlisted") is True
+    assert controls.command_enabled(reg, "crafter/run") is True
+    assert controls.command_enabled(reg, "framework/setup") is True
 
 
 def test_template_off_disables_generated(tmp_path):
     _make_state(tmp_path)
     reg = controls.Registry(commands={"bot/profile": False})
     assert controls.command_enabled(
-        reg, tmp_path, "bot/profile_reddit", template_key="bot/profile") is False
+        reg, "bot/profile_reddit", template_key="bot/profile") is False
 
 
 def test_parse_null_value_raises(tmp_path):
@@ -181,7 +178,7 @@ def test_heal_scaffolds_missing_file(tmp_path):
     cmds, res = controls.inventory(tmp_path)
     assert set(reg.commands) == set(cmds)
     assert set(reg.resources) == set(res)
-    assert all(v is None for v in reg.commands.values())
+    assert all(v is True for v in reg.commands.values())
     assert all(reg.resources.values())
 
 
@@ -206,7 +203,7 @@ def test_heal_appends_and_preserves_comments_and_off(tmp_path):
     assert "bot/setup: off  # keep this off" in text
     reg = controls.parse(tmp_path / "controls.yaml")
     assert reg.commands["bot/setup"] is False        # off survives the heal
-    assert reg.commands["api/ping"] is None          # missing entry appended auto
+    assert reg.commands["api/ping"] is True          # missing entry appended on
     assert reg.resources["connections/api"] is True
 
 
@@ -309,58 +306,61 @@ def test_migrate_warns_on_mixed_format(tmp_path, capsys):
     assert "discarding" in err
 
 
-def test_parse_auto_value(tmp_path):
-    p = tmp_path / "controls.yaml"
-    p.write_text("commands:\n  a/x: auto\n")
-    reg = controls.parse(p)
-    assert reg.commands["a/x"] is None
+def test_parse_rejects_auto(tmp_path):
+    (tmp_path / "controls.yaml").write_text(
+        "commands:\n  m/a: auto\nresources:\n  modules/m: on\n")
+    with pytest.raises(controls.ControlsError, match="auto"):
+        controls.parse(tmp_path / "controls.yaml")
 
 
-def test_parse_auto_rejected_in_resources(tmp_path):
-    p = tmp_path / "controls.yaml"
-    p.write_text("resources:\n  modules/m: auto\n")
-    with pytest.raises(controls.ControlsError):
-        controls.parse(p)
-
-
-def test_auto_follows_owner_cascade(tmp_path):
-    _make_state(tmp_path)
-    reg = controls.Registry(
-        commands={"bot/setup": None},
-        resources={"modules/bot": False},
-    )
-    assert controls.command_enabled(reg, tmp_path, "bot/setup") is False
-    reg.resources["modules/bot"] = True
-    assert controls.command_enabled(reg, tmp_path, "bot/setup") is True
-
-
-def test_owner_off_disables_healed_commands_end_to_end(tmp_path):
-    # the scenario that motivated auto: heal first, then flip the owner off
-    _make_state(tmp_path)
+def test_heal_migrates_auto_to_effective(tmp_path):
+    # owner off: auto command resolved off; owner on: resolved on
+    (tmp_path / "modules/m1/commands").mkdir(parents=True)
+    (tmp_path / "modules/m2/commands").mkdir(parents=True)
+    (tmp_path / "modules/m1/commands/a.md").write_text("---\n---\nx")
+    (tmp_path / "modules/m2/commands/b.md").write_text("---\n---\nx")
+    (tmp_path / "controls.yaml").write_text(
+        "# keep me\n"
+        "commands:\n"
+        "  m1/a: auto  # note survives\n"
+        "  m2/b: auto\n"
+        "resources:\n"
+        "  modules/m1: off\n"
+        "  modules/m2: on\n"
+        "pinned: []\n")
     controls.heal(tmp_path)
     text = (tmp_path / "controls.yaml").read_text()
-    (tmp_path / "controls.yaml").write_text(
-        text.replace("modules/bot: on", "modules/bot: off")
-    )
-    controls.heal(tmp_path)  # must not resurrect anything
+    assert "# keep me" in text
+    assert "  m1/a: off  # note survives" in text
+    assert "  m2/b: on" in text
     reg = controls.parse(tmp_path / "controls.yaml")
-    assert controls.command_enabled(reg, tmp_path, "bot/setup") is False
-    assert controls.command_enabled(reg, tmp_path, "api/ping") is True
+    assert reg.commands["m1/a"] is False
+    assert reg.commands["m2/b"] is True
 
 
-def test_auto_template_entry_follows_owner(tmp_path):
-    _make_state(tmp_path)
+def test_heal_appends_new_commands_as_on(tmp_path):
+    (tmp_path / "modules/m/commands").mkdir(parents=True)
+    (tmp_path / "modules/m/commands/a.md").write_text("---\n---\nx")
+    controls.heal(tmp_path)
+    assert "  m/a: on" in (tmp_path / "controls.yaml").read_text()
+
+
+def test_command_enabled_no_cascade():
     reg = controls.Registry(
-        commands={"bot/profile": None},
-        resources={"modules/bot": False},
+        commands={"m/a": False, "m/t": True},
+        resources={"modules/m": False},
     )
-    assert controls.command_enabled(
-        reg, tmp_path, "bot/profile_reddit", template_key="bot/profile") is False
+    # resource off no longer disables commands
+    assert controls.command_enabled(reg, "m/unlisted") is True
+    assert controls.command_enabled(reg, "m/a") is False
+    # template entry still applies for generated keys
+    assert controls.command_enabled(reg, "m/t_x", template_key="m/t") is True
 
 
-def test_command_enabled_no_root_skips_cascade():
-    reg = controls.Registry(resources={"modules/bot": False})
-    assert controls.command_enabled(reg, None, "bot/unlisted") is True
+def test_set_entry_rejects_auto_everywhere(tmp_path):
+    (tmp_path / "controls.yaml").write_text("commands:\n  m/a: on\n")
+    with pytest.raises(ValueError):
+        controls.set_entry(tmp_path, "commands", "m/a", "auto")
 
 
 def test_server_load_controls_migrates_heals_and_counts(tmp_path, monkeypatch):
@@ -427,6 +427,117 @@ def test_on_list_resources_warns_once_then_resets(tmp_path, monkeypatch, capsys)
     assert server._CONTROLS_WARNED is False
 
 
+def test_set_entry_rewrites_line_preserving_comments(tmp_path):
+    _make_state(tmp_path)
+    (tmp_path / "controls.yaml").write_text(
+        "# top note\n"
+        "commands:\n"
+        "  bot/setup: off  # keep this off\n"
+        "  api/ping: on  # ping note\n"
+        "resources:\n"
+        "  modules/bot: on\n"
+        "pinned: []\n"
+    )
+    reg = controls.set_entry(tmp_path, "commands", "bot/setup", "on")
+    text = (tmp_path / "controls.yaml").read_text()
+    assert "# top note" in text
+    assert "  bot/setup: on  # keep this off" in text
+    assert "  api/ping: on  # ping note" in text
+    assert reg.commands["bot/setup"] is True
+    assert reg.commands["api/ping"] is True
+
+
+def test_set_entry_appends_inside_right_section(tmp_path):
+    _make_state(tmp_path)
+    (tmp_path / "controls.yaml").write_text(
+        "commands:\n"
+        "  bot/setup: on\n"
+        "\n"
+        "resources:\n"
+        "  modules/bot: on\n"
+    )
+    controls.set_entry(tmp_path, "commands", "api/ping", "off")
+    text = (tmp_path / "controls.yaml").read_text()
+    assert text.index("api/ping: off") < text.index("resources:")
+    reg = controls.parse(tmp_path / "controls.yaml")
+    assert reg.commands["api/ping"] is False
+    assert "api/ping" not in reg.resources
+
+
+def test_set_entry_creates_missing_section_and_file(tmp_path):
+    reg = controls.set_entry(tmp_path, "resources", "modules/bot", "off")
+    assert reg.resources["modules/bot"] is False
+    controls.set_entry(tmp_path, "commands", "bot/setup", "on")
+    reg = controls.parse(tmp_path / "controls.yaml")
+    assert reg.commands["bot/setup"] is True
+    assert reg.resources["modules/bot"] is False
+
+
+def test_set_entry_bad_value_and_section_raise(tmp_path):
+    with pytest.raises(ValueError):
+        controls.set_entry(tmp_path, "commands", "bot/setup", "maybe")
+    with pytest.raises(ValueError):
+        controls.set_entry(tmp_path, "prompts", "bot/setup", "on")
+
+
+def test_set_entry_malformed_file_raises(tmp_path):
+    (tmp_path / "controls.yaml").write_text("commands:\n\t- bad\n")
+    with pytest.raises(controls.ControlsError):
+        controls.set_entry(tmp_path, "commands", "bot/setup", "on")
+
+
+def test_set_entry_sequential_calls_both_survive(tmp_path):
+    _make_state(tmp_path)
+    controls.heal(tmp_path)
+    controls.set_entry(tmp_path, "commands", "bot/setup", "off")
+    reg = controls.set_entry(tmp_path, "resources", "connections/api", "off")
+    assert reg.commands["bot/setup"] is False
+    assert reg.resources["connections/api"] is False
+    text = (tmp_path / "controls.yaml").read_text()
+    assert text.count("bot/setup:") == 1
+    assert text.count("connections/api:") == 1
+
+
+def test_set_pinned_round_trips(tmp_path):
+    _make_state(tmp_path)
+    controls.heal(tmp_path)  # scaffold writes "pinned: []"
+    reg = controls.set_pinned(tmp_path, "modules/bot/index.md", True)
+    assert reg.pinned == ["modules/bot/index.md"]
+    reg = controls.set_pinned(tmp_path, "modules/bot/learnings/x.md", True)
+    assert reg.pinned == ["modules/bot/index.md", "modules/bot/learnings/x.md"]
+    reg = controls.set_pinned(tmp_path, "modules/bot/index.md", False)
+    assert reg.pinned == ["modules/bot/learnings/x.md"]
+    reg = controls.set_pinned(tmp_path, "modules/bot/learnings/x.md", False)
+    assert reg.pinned == []
+    assert "pinned: []" in (tmp_path / "controls.yaml").read_text()
+
+
+def test_set_pinned_creates_section_and_is_idempotent(tmp_path):
+    (tmp_path / "controls.yaml").write_text("commands:\n  bot/setup: on\n")
+    reg = controls.set_pinned(tmp_path, "modules/bot/index.md", True)
+    assert reg.pinned == ["modules/bot/index.md"]
+    reg = controls.set_pinned(tmp_path, "modules/bot/index.md", True)
+    assert reg.pinned == ["modules/bot/index.md"]
+    reg = controls.set_pinned(tmp_path, "never/pinned.md", False)
+    assert reg.pinned == ["modules/bot/index.md"]
+
+
+def test_set_pinned_preserves_other_sections_and_comments(tmp_path):
+    (tmp_path / "controls.yaml").write_text(
+        "# header comment\n"
+        "commands:\n"
+        "  bot/setup: off  # note\n"
+        "pinned:\n"
+        "  - a.md\n"
+        "  - b.md\n"
+    )
+    controls.set_pinned(tmp_path, "a.md", False)
+    text = (tmp_path / "controls.yaml").read_text()
+    assert "# header comment" in text
+    assert "bot/setup: off  # note" in text
+    assert controls.parse(tmp_path / "controls.yaml").pinned == ["b.md"]
+
+
 def test_cmd_init_scaffolds_controls(tmp_path, monkeypatch):
     from gcontext import cli, telemetry
 
@@ -439,4 +550,62 @@ def test_cmd_init_scaffolds_controls(tmp_path, monkeypatch):
     reg = controls.parse(tmp_path / "fresh" / "controls.yaml")
     assert reg is not None
     assert any(k.startswith("framework/") for k in reg.commands)
-    assert all(v is None for v in reg.commands.values())
+    assert all(v is True for v in reg.commands.values())
+
+
+def test_parse_names_section(tmp_path):
+    (tmp_path / "controls.yaml").write_text(
+        "commands:\n  m/a: on\nnames:\n"
+        "  m/a: craft-post\n  modules/m: Bot commenter\n")
+    reg = controls.parse(tmp_path / "controls.yaml")
+    assert reg.names == {"m/a": "craft-post", "modules/m": "Bot commenter"}
+
+
+def test_parse_names_bad_command_charset(tmp_path):
+    (tmp_path / "controls.yaml").write_text("names:\n  m/a: 'Bad Name!'\n")
+    with pytest.raises(controls.ControlsError, match="names"):
+        controls.parse(tmp_path / "controls.yaml")
+
+
+def test_set_name_add_update_remove(tmp_path):
+    (tmp_path / "controls.yaml").write_text(
+        "# keep\ncommands:\n  m/a: on\n")
+    controls.set_name(tmp_path, "m/a", "craft-post")
+    text = (tmp_path / "controls.yaml").read_text()
+    assert "names:" in text and "  m/a: craft-post" in text and "# keep" in text
+    controls.set_name(tmp_path, "m/a", "other_name")
+    assert "  m/a: other_name" in (tmp_path / "controls.yaml").read_text()
+    controls.set_name(tmp_path, "m/a", "")
+    text = (tmp_path / "controls.yaml").read_text()
+    assert "m/a: other_name" not in text
+    reg = controls.parse(tmp_path / "controls.yaml")
+    assert reg.names == {}
+
+
+def test_set_name_validates_command_charset(tmp_path):
+    (tmp_path / "controls.yaml").write_text("commands:\n  m/a: on\n")
+    with pytest.raises(ValueError):
+        controls.set_name(tmp_path, "m/a", "Bad Name!")
+    # resource keys take free text
+    controls.set_name(tmp_path, "modules/m", "Bot commenter")
+    assert controls.parse(
+        tmp_path / "controls.yaml").names["modules/m"] == "Bot commenter"
+
+
+def test_set_name_creates_missing_file(tmp_path):
+    controls.set_name(tmp_path, "m/a", "x")
+    assert (tmp_path / "controls.yaml").exists()
+    assert controls.parse(tmp_path / "controls.yaml").names == {"m/a": "x"}
+
+
+def test_heal_leaves_names_section_alone(tmp_path):
+    (tmp_path / "modules/m/commands").mkdir(parents=True)
+    (tmp_path / "modules/m/commands/a.md").write_text("---\n---\nx")
+    (tmp_path / "controls.yaml").write_text(
+        "names:\n  m/a: my-name\n")
+    controls.heal(tmp_path)
+    text = (tmp_path / "controls.yaml").read_text()
+    assert "  m/a: my-name" in text
+    reg = controls.parse(tmp_path / "controls.yaml")
+    assert reg.names == {"m/a": "my-name"}
+    assert reg.commands.get("m/a") is True  # healed into commands as on

@@ -1,24 +1,27 @@
 """controls.yaml: the full registry of everything the server exposes.
 
 Disk is the source of what exists; controls.yaml is the authoritative on/off
-overlay, healed to completeness: every disk item gets a line, appended as
-auto for commands and on for resources.
+overlay, healed to completeness: every disk item gets a line, appended as on.
 Design decisions: docs/controls-registry-spec.md in the lab repo.
 
 Key scheme:
 - commands: "<owner>/<stem>". Framework prompts use owner "framework". A
-  template (`each:`) file gets ONE line; a generated entry can be overridden
+  template (``each:``) file gets ONE line; a generated entry can be overridden
   by a hand-written "<owner>/<template-stem>_<entry>" line. Values are
-  three-state: on (always), off (never), auto (follow the owner cascade).
+  two-state: on or off.
 - resources: "modules/<name>", "connections/<name>", "agents/<name>".
-  agents/<name> never reaches the picker; the line exists only so the
-  whole-owner cascade covers the agent's commands. Values are strictly
-  on/off.
+  A resource toggle controls picker listing only; it does not cascade to
+  commands. Values are on or off.
+- names: optional overrides for display or invocation names. A command key
+  value becomes the registered MCP prompt name (and so the slash invocation);
+  charset is restricted to a-z, 0-9, underscore, and hyphen. A resource key
+  value is a free-text picker display title. URIs never change. Collisions
+  are resolved at registration time by keeping the default and warning.
 
 Enablement chain for a command: explicit on/off command entry > template
-entry (for generated commands, when not auto) > owner resource entry (when
-the command entry is auto) > on. Pins are independent of owner state.
-Unlisted anything is on (the heal adds the line, auto for commands).
+entry (for generated commands) > on. No owner cascade: a resource toggle
+controls picker listing only. Pins are independent of owner state.
+Unlisted anything is on (the heal adds the line).
 
 Failure handling: parse errors raise ControlsError. The server fails loud at
 startup and keeps the last good registry at request time. Duplicate keys
@@ -31,6 +34,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,6 +51,8 @@ COMMAND_GLOBS = (
     "connections/*/commands/*", "modules/*/commands/*", "agents/*/commands/*"
 )
 OWNER_KINDS = ("modules", "connections", "agents")
+_NAME_RE = re.compile(r"[a-z0-9_-]+")
+_RESOURCE_PREFIXES = tuple(f"{k}/" for k in OWNER_KINDS)
 OLD_KEYS = {"hidden_commands", "hidden_resources", "pinned_resources"}
 
 
@@ -54,13 +60,19 @@ class ControlsError(Exception):
     """controls.yaml is unreadable as a registry."""
 
 
+def _is_resource_key(key: str) -> bool:
+    """True when *key* starts with a known owner kind prefix (modules/, etc.)."""
+    return key.startswith(_RESOURCE_PREFIXES)
+
+
 @dataclass
 class Registry:
-    # Command values are three-state: True (on, always), False (off, never),
-    # None (auto, follow the owner cascade). Resources stay strictly bool.
-    commands: dict[str, bool | None] = field(default_factory=dict)
+    # Command values are two-state: True (on) or False (off).
+    # Resources are the same: True (on) or False (off).
+    commands: dict[str, bool] = field(default_factory=dict)
     resources: dict[str, bool] = field(default_factory=dict)
     pinned: list[str] = field(default_factory=list)
+    names: dict[str, str] = field(default_factory=dict)
 
 
 class _DupLoader(yaml.SafeLoader):
@@ -109,22 +121,22 @@ def parse(path: Path) -> Registry | None:
     if data is None:
         return None
 
-    def section(name: str, allow_auto: bool = False) -> dict[str, bool | None]:
+    def section(name: str) -> dict[str, bool]:
         raw = data.get(name)
         if raw is None:
             return {}
         if not isinstance(raw, dict):
             raise ControlsError(f"'{name}' must be a mapping of key: on|off")
-        out: dict[str, bool | None] = {}
+        out: dict[str, bool] = {}
         for k, v in raw.items():
-            if allow_auto and isinstance(v, str) and v == "auto":
-                out[str(k)] = None
-                continue
+            if isinstance(v, str) and v == "auto":
+                raise ControlsError(
+                    f"'{name}' entry '{k}' is auto: auto was removed; "
+                    "use on or off (the server migrates old files at startup)"
+                )
             if not isinstance(v, bool):
                 raise ControlsError(
-                    f"'{name}' entry '{k}' must be on, off"
-                    + (" or auto" if allow_auto else "")
-                    + f", got {v!r}"
+                    f"'{name}' entry '{k}' must be on or off, got {v!r}"
                 )
             out[str(k)] = v
         return out
@@ -136,10 +148,27 @@ def parse(path: Path) -> Registry | None:
         pinned = [str(v) for v in raw_pinned]
     else:
         raise ControlsError("'pinned' must be a list")
+
+    raw_names = data.get("names")
+    names: dict[str, str] = {}
+    if raw_names is not None:
+        if not isinstance(raw_names, dict):
+            raise ControlsError("'names' must be a mapping of key: name")
+        for k, v in raw_names.items():
+            k, v = str(k), str(v)
+            if not v:
+                continue
+            if not _is_resource_key(k) and not _NAME_RE.fullmatch(v):
+                raise ControlsError(
+                    f"'names' entry '{k}': command names may use only "
+                    f"a-z, 0-9, _ and -, got {v!r}")
+            names[k] = v
+
     return Registry(
-        commands=section("commands", allow_auto=True),
+        commands=section("commands"),
         resources=section("resources"),
         pinned=pinned,
+        names=names,
     )
 
 
@@ -180,29 +209,14 @@ def owner_resource_key(root: Path, owner: str) -> str | None:
     return None
 
 
-def command_enabled(reg: Registry, root: Path | None, key: str,
+def command_enabled(reg: Registry, key: str,
                     template_key: str | None = None) -> bool:
-    """Explicit command entry > template entry > owner cascade > on.
-
-    Command values are three-state: True/False decide outright; None (auto)
-    falls through to the next step in the chain. *template_key* is the
-    template file's own key when *key* names a generated entry; a
-    hand-written per-entry line overrides it. *root* is None when no project
-    root is known yet (e.g. before startup); the owner cascade is skipped in
-    that case and the default is on."""
-    if key in reg.commands and reg.commands[key] is not None:
+    """Explicit command entry > template entry > on. No owner cascade:
+    a resource toggle controls picker listing only."""
+    if key in reg.commands:
         return reg.commands[key]
     if template_key is not None and template_key in reg.commands:
-        template_value = reg.commands[template_key]
-        if template_value is not None:
-            return template_value
-    owner = key.split("/", 1)[0]
-    if owner == "framework":
-        return True
-    if root is not None:
-        okey = owner_resource_key(root, owner)
-        if okey is not None and okey in reg.resources:
-            return reg.resources[okey]
+        return reg.commands[template_key]
     return True
 
 
@@ -211,15 +225,9 @@ def resource_enabled(reg: Registry, key: str) -> bool:
 
 
 SCAFFOLD_HEADER = (
-    "# controls.yaml: everything this agent exposes, one line per item.\n"
-    "# commands keys are <owner>/<stem>; resources keys are\n"
-    "# modules|connections|agents/<name>.\n"
-    "# commands: on (always), off (never), or auto (follow the owner).\n"
-    "# resources: on or off. An owner set to off hides it and disables its\n"
-    "# auto commands; a command line set to on or off overrides its owner\n"
-    "# either way. The server appends new commands as auto and new\n"
-    "# resources as on.\n"
-    "# pinned lists exact file paths shown in the resource picker.\n"
+    "# controls.yaml: the on/off registry for everything this agent exposes.\n"
+    "# The server maintains it; the dashboard Controls tab can flip entries.\n"
+    "# Format: https://github.com/bleak-ai/gcontext/blob/main/docs/reference.md#controls\n"
 )
 
 
@@ -250,7 +258,8 @@ def _dedupe(lines: list[str]) -> tuple[list[str], bool]:
     A repeated top-level section header is dropped, but the lines that
     followed it still belong to that section for de-dup purposes.
     Resolving a duplicate to off rewrites the first line and drops any
-    inline comment on it (accepted tradeoff)."""
+    inline comment on it (accepted tradeoff). The names section is
+    deduped too; duplicate names lines keep the first occurrence."""
     out: list[str] = []
     seen: dict[tuple[str, str], int] = {}
     seen_headers: set[str] = set()
@@ -266,7 +275,7 @@ def _dedupe(lines: list[str]) -> tuple[list[str], bool]:
             seen_headers.add(section)
             out.append(ln)
             continue
-        if section in ("commands", "resources") and bare and ":" in bare:
+        if section in ("commands", "resources", "names") and bare and ":" in bare:
             key, _, value = bare.partition(":")
             ident = (section, key.strip())
             if ident in seen:
@@ -301,18 +310,68 @@ def _atomic_write(path: Path, lines: list[str]) -> None:
     os.replace(tmp, path)
 
 
-def heal(root: Path, warn: bool = False) -> bool:
-    """Append every unlisted disk item (commands as auto, resources as on);
-    dedupe duplicates off-wins.
+def _auto_keys(lines: list[str]) -> list[int]:
+    """Indexes of '  key: auto' lines inside the commands section."""
+    bounds = _section_bounds(lines, "commands")
+    if bounds is None:
+        return []
+    start, end = bounds
+    return [
+        i for i in range(start + 1, end)
+        if lines[i].split("#", 1)[0].strip().endswith(": auto")
+    ]
 
-    Append-only for existing content (comments and ordering survive), atomic
-    write under a lock file. Returns True when the file changed. With
-    warn=True, report entries that match nothing on disk (kept, not pruned).
-    Raises ControlsError when the existing file is malformed."""
+
+def _migrate_auto(root: Path, path: Path) -> bool:
+    """Rewrite every '  key: auto' command line to its resolved on/off value,
+    using the pre-removal cascade one last time (explicit > template > owner
+    resource > on). Trailing comments on the rewritten lines survive. Returns
+    True when the file changed. Caller holds the lock."""
+    try:
+        lines = path.read_text(encoding="utf-8").split("\n")
+    except OSError:
+        return False
+    idxs = _auto_keys(lines)
+    if not idxs:
+        return False
+    # tolerant read: resources section parses normally, auto commands skipped
+    data = _load_yaml(path) or {}
+    raw_res = data.get("resources") or {}
+    resources = {str(k): v for k, v in raw_res.items() if isinstance(v, bool)}
+    raw_cmds = data.get("commands") or {}
+    explicit = {str(k): v for k, v in raw_cmds.items() if isinstance(v, bool)}
+
+    def resolved(key: str) -> bool:
+        owner = key.split("/", 1)[0]
+        if owner == "framework":
+            return True
+        okey = owner_resource_key(root, owner)
+        if okey is not None and okey in resources:
+            return resources[okey]
+        return True
+
+    for i in idxs:
+        key = lines[i].split("#", 1)[0].strip().rsplit(":", 1)[0].strip()
+        value = explicit.get(key, resolved(key))
+        lines[i] = f"  {key}: {'on' if value else 'off'}{_line_comment(lines[i])}"
+    _atomic_write(path, lines)
+    return True
+
+
+def heal(root: Path, warn: bool = False) -> bool:
+    """Append every unlisted disk item as on; dedupe duplicates off-wins.
+
+    On the first call after auto was removed, migrates any remaining auto
+    lines to their resolved on/off value (one-time). Append-only for existing
+    content (comments and ordering survive), atomic write under a lock file.
+    Returns True when the file changed. With warn=True, report entries that
+    match nothing on disk (kept, not pruned). Raises ControlsError when the
+    existing file is malformed."""
     path = root / "controls.yaml"
     with open(root / ".controls.lock", "w") as lf:
         if fcntl is not None:
             fcntl.flock(lf, fcntl.LOCK_EX)
+        migrated = _migrate_auto(root, path)
         reg = parse(path) or Registry()
         cmds, res = inventory(root)
         if warn:
@@ -328,17 +387,18 @@ def heal(root: Path, warn: bool = False) -> bool:
         if lines is None:
             lines = (
                 SCAFFOLD_HEADER.split("\n")[:-1]
-                + ["", "commands:"] + [f"  {k}: auto" for k in cmds]
+                + ["", "commands:"] + [f"  {k}: on" for k in cmds]
                 + ["", "resources:"] + [f"  {k}: on" for k in res]
                 + ["", "pinned: []"]
             )
             _atomic_write(path, lines)
             return True
         lines, changed = _dedupe(lines)
+        changed = changed or migrated
         for section in ("commands", "resources"):
             if not missing[section]:
                 continue
-            default = "auto" if section == "commands" else "on"
+            default = "on"
             new = [f"  {k}: {default}" for k in missing[section]]
             bounds = _section_bounds(lines, section)
             if bounds is None:
@@ -353,6 +413,181 @@ def heal(root: Path, warn: bool = False) -> bool:
         if changed:
             _atomic_write(path, lines)
         return changed
+
+
+def _line_comment(line: str) -> str:
+    """The trailing '  # note' part of a '  key: value  # note' line, with its
+    leading spacing, or '' when the line has no comment."""
+    idx = line.find("#")
+    if idx == -1:
+        return ""
+    head = line[:idx].rstrip()
+    return line[len(head):]
+
+
+def _rewrite_entry(lines: list[str], section: str, key: str, value: str) -> list[str]:
+    """Rewrite (or append) one '  key: value' line inside *section*.
+    A trailing comment on the rewritten line survives; every other line is
+    left byte-identical. Creates the section at the end when absent."""
+    bounds = _section_bounds(lines, section)
+    if bounds is None:
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if lines:
+            lines.append("")
+        lines += [f"{section}:", f"  {key}: {value}"]
+        return lines
+    start, end = bounds
+    for i in range(start + 1, end):
+        bare = lines[i].split("#", 1)[0].strip()
+        entry_key, sep, _ = bare.partition(":")
+        if sep and entry_key.strip() == key:
+            lines[i] = f"  {key}: {value}{_line_comment(lines[i])}"
+            return lines
+    lines[end:end] = [f"  {key}: {value}"]
+    return lines
+
+
+def _remove_entry(lines: list[str], section: str, key: str) -> list[str]:
+    """Delete the '  key: value' line inside *section*; drop the section
+    header too when nothing but blank lines remain under it."""
+    bounds = _section_bounds(lines, section)
+    if bounds is None:
+        return lines
+    start, end = bounds
+    for i in range(start + 1, end):
+        bare = lines[i].split("#", 1)[0].strip()
+        entry_key, sep, _ = bare.partition(":")
+        if sep and entry_key.strip() == key:
+            del lines[i]
+            break
+    bounds = _section_bounds(lines, section)
+    if bounds is not None:
+        start, end = bounds
+        if not any(
+            lines[i].split("#", 1)[0].strip()
+            for i in range(start + 1, end)
+        ):
+            del lines[start:end]
+    return lines
+
+
+def set_name(root: Path, key: str, value: str) -> Registry:
+    """Set or clear one names: override. Empty *value* removes the line.
+    Command values are charset-checked; resource values are free text.
+    Atomic write under the lock file. Returns the new registry."""
+    value = value.strip()
+    if value and not _is_resource_key(key) and not _NAME_RE.fullmatch(value):
+        raise ValueError("command names may use only a-z, 0-9, _ and -")
+    path = root / "controls.yaml"
+    with open(root / ".controls.lock", "w") as lf:
+        if fcntl is not None:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+        parse(path)  # malformed file: raise before touching anything
+        try:
+            lines = path.read_text(encoding="utf-8").split("\n")
+        except OSError:
+            lines = []
+        if value:
+            lines = _rewrite_entry(lines, "names", key, value)
+        else:
+            lines = _remove_entry(lines, "names", key)
+        _atomic_write(path, lines)
+        return parse(path) or Registry()
+
+
+def set_entry(root: Path, section: str, key: str, value: str) -> Registry:
+    """Set one registry entry to on or off, editing a single line.
+
+    Line-based like the heal: comments and ordering elsewhere survive, the
+    rewritten line keeps its own trailing comment. When the key has no line
+    yet (a per-entry template override, or an item the heal has not seen),
+    it is appended at the section's end. Atomic write under the lock file.
+    Returns the new registry. Raises ValueError on a bad section or value
+    and ControlsError when the existing file is malformed (never guess on a
+    broken file)."""
+    if section not in ("commands", "resources"):
+        raise ValueError(f"section must be commands or resources, got {section!r}")
+    if value not in ("on", "off"):
+        raise ValueError(f"value must be on or off, got {value!r}")
+    path = root / "controls.yaml"
+    with open(root / ".controls.lock", "w") as lf:
+        if fcntl is not None:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+        parse(path)  # malformed file: raise before touching anything
+        try:
+            lines = path.read_text(encoding="utf-8").split("\n")
+        except OSError:
+            lines = []
+        lines = _rewrite_entry(lines, section, key, value)
+        _atomic_write(path, lines)
+        return parse(path) or Registry()
+
+
+def set_pinned(root: Path, pin_path: str, pinned: bool) -> Registry:
+    """Add or remove one '  - path' line in the pinned section.
+
+    Creates the section when absent; removing the last pin leaves
+    'pinned: []'. An inline 'pinned: [...]' line is expanded to block form
+    on the first add. Atomic write under the lock file. Returns the new
+    registry. Raises ControlsError when the existing file is malformed."""
+    path = root / "controls.yaml"
+    with open(root / ".controls.lock", "w") as lf:
+        if fcntl is not None:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+        reg = parse(path) or Registry()
+        try:
+            lines = path.read_text(encoding="utf-8").split("\n")
+        except OSError:
+            lines = []
+        inline_idx = next(
+            (i for i, ln in enumerate(lines)
+             if (b := ln.split("#", 1)[0].strip()).startswith("pinned:")
+             and b != "pinned:"),
+            None,
+        )
+        if inline_idx is not None:
+            # inline form (e.g. the scaffold's "pinned: []"): rebuild from
+            # the parsed list, block form when anything remains
+            items = [p for p in reg.pinned if p != pin_path or pinned]
+            if pinned and pin_path not in items:
+                items.append(pin_path)
+            if items:
+                lines[inline_idx:inline_idx + 1] = (
+                    ["pinned:"] + [f"  - {p}" for p in items]
+                )
+            else:
+                lines[inline_idx] = "pinned: []"
+        else:
+            bounds = _section_bounds(lines, "pinned")
+            if bounds is None:
+                while lines and not lines[-1].strip():
+                    lines.pop()
+                if lines:
+                    lines.append("")
+                if pinned:
+                    lines += ["pinned:", f"  - {pin_path}"]
+                else:
+                    lines.append("pinned: []")
+            else:
+                start, end = bounds
+                existing = [
+                    i for i in range(start + 1, end)
+                    if lines[i].split("#", 1)[0].strip() == f"- {pin_path}"
+                ]
+                if pinned and not existing:
+                    lines[end:end] = [f"  - {pin_path}"]
+                elif not pinned and existing:
+                    for i in reversed(existing):
+                        del lines[i]
+                    start, end = _section_bounds(lines, "pinned")
+                    if not any(
+                        lines[i].split("#", 1)[0].strip().startswith("- ")
+                        for i in range(start + 1, end)
+                    ):
+                        lines[start] = "pinned: []"
+        _atomic_write(path, lines)
+        return parse(path) or Registry()
 
 
 def migrate(root: Path) -> bool:
