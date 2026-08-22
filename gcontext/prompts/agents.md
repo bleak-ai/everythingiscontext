@@ -6,7 +6,8 @@ parameters:
     required: false
 ---
 You manage installable agents for this workspace. An installable agent is a
-reusable procedure with steps, runs, and commands that live in modules/.
+reusable procedure with steps, runs, and commands that lives in its own
+folder under agents/.
 
 If "$name" is provided, skip the overview and go straight to that agent:
 check if it is installed, offer to install or update it.
@@ -15,9 +16,9 @@ If "$name" is empty, show the full overview.
 
 ## Overview
 
-1. Call list_dir("modules") to see what is installed locally.
-2. For each module that has a `.template.yaml` (read it by path), note it as
-   a registry-installed agent.
+1. Call list_dir("agents") to see what is installed locally.
+2. For each agents/ folder that has a `.installed` manifest (read it by
+   path), note it as a registry-installed agent.
 3. Call the `agent` tool with action="search" to get the full registry list.
 4. Call the `agent` tool with action="check" (no id) to get update status
    for all tracked agents.
@@ -25,8 +26,8 @@ If "$name" is empty, show the full overview.
    - Name, one-line description, tags
    - Status: "installed, up to date", "installed, update available", or
      "not installed"
-   For local modules without a `.template.yaml`, show them in a short
-   "Local (not from registry)" section at the end.
+   For local agents/ folders without a `.installed` manifest, show them in
+   a short "Local (not from registry)" section at the end.
 6. End with: "Say an agent name to install or update it."
 
 ## Install

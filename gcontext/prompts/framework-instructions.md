@@ -15,8 +15,9 @@ How the folder is organized (three top-level folders):
 - connections/<service>/: a service you can reach. Its connection.yaml declares
   the secret NAMEs and Python deps it needs; its index.md explains the API in
   practice. connection.yaml fields: `name` (folder identity), `description`,
-  `kind` (one of: ticket-tracker, product-api, keyword-source, browser,
-  source-control, package-registry, deploy-target, notification-sink),
+  `kind` (a value from the fixed capability set enforced by the framework
+  and documented in the package's docs/setup-script.md; for example
+  ticket-tracker or browser),
   `secrets` (list of secret NAMEs, values live in secrets.env), and `deps`
   (list of pip package names installed into the project venv).
   Read the index.md before writing a script against a service, and
@@ -35,10 +36,10 @@ How the folder is organized (three top-level folders):
 Dependency direction: agents may reference modules and connections, modules
 may reference connections. Never the reverse. A connection never depends on a
 module or agent; a module never depends on an agent.
-- scripts/ folders (inside connections and modules): proven procedures. Run
+- scripts/ folders (inside connections, modules, and agents): proven procedures. Run
   them by path with run_script instead of rewriting them, and save a script
   there once it has proven itself.
-- commands/ folders (inside connections and modules): user-invokable entry
+- commands/ folders (inside connections, modules, and agents): user-invokable entry
   points, exposed as MCP prompts (slash commands in Claude Code, named
   /mcp__<server>__<command>: the file stem with hyphens as underscores when
   unique, <owner>__<command> when two owners collide or the stem matches a
@@ -63,13 +64,13 @@ module or agent; a module never depends on an agent.
   list refreshes only on reconnect: after creating an entry, tell the user
   to reconnect the client (/mcp in Claude Code) to see its command.
   If your client does not surface MCP prompts, commands still work: read
-  the command file under `modules/<id>/commands/` (or
-  `connections/<id>/commands/`) with read_file and follow its body as the
+  the command file under `agents/<id>/commands/`, `modules/<id>/commands/`,
+  or `connections/<id>/commands/` with read_file and follow its body as the
   instruction, filling the declared parameters from the user's request.
   When the user asks for a reusable command or agent entry point, this
   is where it goes: write the file with write_file under the connection or
-  module it belongs to. New command files appear after a server restart,
-  which the user must do; tell them.
+  module it belongs to. New command files appear after the user runs
+  `gcontext reload` and reconnects the client; tell them.
 - archive/: retired state. Not scanned or listed, still readable by path.
 
 How state grows: one topic per module. A folder's index.md is its map and
