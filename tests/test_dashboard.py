@@ -300,7 +300,17 @@ def test_api_controls_post_bad_requests(client, controls_project):
     ).status_code == 400
 
 
+def test_api_controls_post_pin_rejects_traversal_and_missing(client, controls_project):
+    r = client.post("/api/controls", json={"pin": "../../../etc/passwd", "pinned": True})
+    assert r.status_code == 400
+    assert "outside" in r.json()["error"]
+    r = client.post("/api/controls", json={"pin": "modules/notes/nope.md", "pinned": True})
+    assert r.status_code == 400
+    assert "not found" in r.json()["error"]
+
+
 def test_api_controls_post_pin_round_trip(client, controls_project):
+    (controls_project / "modules" / "notes" / "notes.md").write_text("note\n")
     resp = client.post("/api/controls", json={
         "pin": "modules/notes/notes.md", "pinned": True,
     })
