@@ -31,11 +31,11 @@ A framework for building stateful agents. An agent is a folder of plain files (i
 - **Scripts** - `run_script` for saved procedures, `run_adhoc_script` for one-off code, both with secret injection and output scrubbing
 - **Commands** - markdown or Python files that register as slash commands in your client
 - **Dashboard** - read-only web UI with file browser, connection status, and live activity feed
-- **Installable agents** - `gcontext add <id>` installs a pre-built agent from the [registry](https://github.com/bleak-ai/agents)
+- **Installable agents** - `gcontext add <id>` installs a pre-built agent from the [registry](https://github.com/bleak-ai/agents); browse them at [gcontext.ai/agents](https://gcontext.ai/agents/)
 
 ## Install
 
-gcontext needs [uv](https://docs.astral.sh/uv/): it installs the tool and manages each agent's script environment at runtime. No uv yet? One line, no prerequisites (it brings its own Python if needed):
+gcontext needs [uv](https://docs.astral.sh/uv/) and Python 3.11 or newer; uv installs a suitable Python by itself when the machine has none. uv installs the tool and manages each agent's script environment at runtime. No uv yet? One line, no prerequisites:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh   # or: brew install uv
@@ -53,6 +53,8 @@ uv tool install gcontext-ai
 gcontext init my-agent      # create the state folder
 gcontext up my-agent        # serve it at http://127.0.0.1:4242/mcp
 ```
+
+The same server also hosts a read-only dashboard at `http://127.0.0.1:4242/`: file browser, connection status, live activity feed.
 
 Then connect a client (once, from any directory):
 
@@ -164,7 +166,8 @@ The day-to-day details of both are in [docs/using.md](docs/using.md).
 | `gcontext connect [client]` | Connection steps for claude, desktop, codex, cursor |
 | `gcontext add <id>` | Install an agent from the [registry](https://github.com/bleak-ai/agents) or from any public GitHub repo URL |
 | `gcontext update <id>` | Update an installed agent (three-way merge, keeps your local changes) |
-| `gcontext search [query]` | Search the agent registry |
+| `gcontext remove <id>` | Uninstall an agent, with optional archiving of its data |
+| `gcontext search [query]` | Search the agent registry (no query lists every agent; also browsable at [gcontext.ai/agents](https://gcontext.ai/agents/)) |
 | `gcontext share <path>` | Validate an agent folder and print the steps to submit it to the registry |
 | `gcontext context [dir]` | Print the context ledger |
 

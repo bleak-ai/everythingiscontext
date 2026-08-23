@@ -966,7 +966,7 @@ def main():
     add_common(context_parser)
 
     add_parser = subparsers.add_parser("add", help="Install an agent from the GitHub registry into agents/")
-    add_parser.add_argument("source", help="Agent id (e.g. browser-recipes) or GitHub URL (e.g. https://github.com/owner/repo/tree/main/path)")
+    add_parser.add_argument("source", help="Agent id (e.g. browser-cookbook) or GitHub URL (e.g. https://github.com/owner/repo/tree/main/path)")
     add_parser.add_argument("project", nargs="?", help="Path to gcontext project directory")
 
     share_parser = subparsers.add_parser("share", help="Validate an agent template and show how to submit it via PR")

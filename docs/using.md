@@ -107,6 +107,8 @@ Next steps:
   3. Run the setup: /mcp__<server>__<id>__setup
 ```
 
+The agent's setup command carries the agent id in its name (`<id>__setup`) because every project also has the framework's own `/mcp__<server>__setup`; the id keeps the two apart. `<server>` is the name from `gcontext.yaml`, the one you gave `gcontext init`.
+
 The setup command personalizes the agent by asking you what it should do. Everything the agent learns while working (runs, logs, harvested data) lands inside its own `agents/<id>/` folder; `gcontext remove <id>` offers to archive those files to `archive/agents/<id>/` before deleting the rest.
 
 The seven tools the agent works with are described in [tools.md](tools.md).
