@@ -257,6 +257,12 @@ def _controls_payload(root: Path) -> dict:
     for key in cmds:
         owner = key.split("/", 1)[0]
         path = key_to_path.get(key)
+        if owner == "framework":
+            category = "framework"
+        elif path is not None:
+            category = path.relative_to(root).parts[0]
+        else:
+            category = "unknown"
         registered = commands_mod.prompt_name_for_key(key)
         default = _default_prompt_name(key)
         custom = key in reg.names
@@ -265,6 +271,7 @@ def _controls_payload(root: Path) -> dict:
         row: dict = {
             "key": key,
             "owner": owner,
+            "category": category,
             "name": name,
             "default_name": default,
             "custom": custom,
@@ -389,6 +396,12 @@ async def api_controls_post(request: Request) -> JSONResponse:
                     {"error": 'a pin change needs {"pin": "<path>", "pinned": true|false}'},
                     status_code=400,
                 )
+            if pinned:
+                target = (root / pin).resolve()
+                if not str(target).startswith(str(root.resolve())):
+                    return JSONResponse({"error": "path is outside the project"}, status_code=400)
+                if not target.is_file():
+                    return JSONResponse({"error": f"file not found: {pin}"}, status_code=400)
             controls.set_pinned(root, pin, pinned)
             note = "Live now: the resource picker reflects pins on the next list."
         elif "name" in body:

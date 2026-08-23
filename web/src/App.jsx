@@ -5,7 +5,6 @@ import Overview from "./Overview.jsx";
 import Connections from "./Connections.jsx";
 import Modules from "./Modules.jsx";
 import Agents from "./Agents.jsx";
-import Commands from "./Commands.jsx";
 import Controls from "./Controls.jsx";
 import Files from "./Files.jsx";
 import Activity from "./Activity.jsx";
@@ -35,7 +34,6 @@ function Sidebar({ section, setSection, project, sessions }) {
     { key: "connections", label: "Connections" },
     { key: "modules", label: "Modules" },
     { key: "agents", label: "Agents" },
-    { key: "commands", label: "Commands" },
     { key: "controls", label: "Controls" },
     { key: "files", label: "Files" },
     { key: "activity", label: "Activity" },
@@ -70,7 +68,7 @@ function Sidebar({ section, setSection, project, sessions }) {
   );
 }
 
-const SECTIONS = ["overview", "connections", "modules", "agents", "commands", "controls", "files", "activity"];
+const SECTIONS = ["overview", "connections", "modules", "agents", "controls", "files", "activity"];
 const savedSection = () => {
   const s = localStorage.getItem("gc.section");
   return SECTIONS.includes(s) ? s : "overview";
@@ -129,7 +127,6 @@ export default function App() {
             {section === "connections" && <Connections />}
             {section === "modules" && <Modules />}
             {section === "agents" && <Agents />}
-            {section === "commands" && <Commands />}
             {section === "controls" && <Controls />}
             {section === "files" && <Files />}
             {section === "activity" && <Activity />}
