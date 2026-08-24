@@ -38,8 +38,8 @@ export function copyText(text) {
 let serverName = "gcontext";
 export const setServerName = (name) => { if (name) serverName = name; };
 export const getServerName = () => serverName;
-export const fileRef = (path) => `@${serverName}:gcontext://${path}`;
-export const folderRef = (path) => `@${serverName}:gcontext://${path.replace(/\/$/, "")}/`;
+export const fileRef = (path) => `gcontext://${path}`;
+export const folderRef = (path) => `gcontext://${path.replace(/\/$/, "")}/`;
 export const refPrompt = (path, isDir) => (isDir ? folderRef(path) : fileRef(path));
 export const commandInvocation = (name) => `/mcp__${serverName}__${name}`;
 export const commandPrefix = () => `/mcp__${serverName}__`;

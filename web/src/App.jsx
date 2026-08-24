@@ -79,6 +79,7 @@ export default function App() {
   const [project, setProject] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [err, setErr] = useState(null);
+  const [clientBehind, setClientBehind] = useState(null);
   const mobile = useIsMobile();
   const [navOpen, setNavOpen] = useState(false);
   useEffect(() => { localStorage.setItem("gc.section", section); }, [section]);
@@ -86,6 +87,7 @@ export default function App() {
   const refresh = () => {
     getJSON("/api/project").then((p) => { setProject(p); setServerName(p.name); setErr(null); }).catch((e) => setErr(e.message));
     getJSON("/api/sessions").then((d) => setSessions(d.sessions)).catch(() => {});
+    getJSON("/status").then((s) => setClientBehind(s.client_behind || null)).catch(() => {});
   };
   useEffect(() => {
     refresh();
@@ -118,6 +120,19 @@ export default function App() {
         )}
         <main className="gc-scroll" style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
           <div style={{ maxWidth: 1160, margin: "0 auto", padding: mobile ? "16px 14px 60px" : "22px 30px 60px" }}>
+            {clientBehind?.behind && (
+              <div style={{ marginBottom: 12, background: "#fff4e5", border: "1px solid #e8c49a", color: "#8a4500", borderRadius: 7, padding: "11px 13px", fontSize: 13, fontFamily: mono }}>
+                {clientBehind.reason === "server_stale"
+                  ? "STALE: run gcontext reload"
+                  : clientBehind.reason === "server_restarted"
+                    ? `RECONNECT NEEDED FOR ${project?.name || "gcontext"} → server restarted`
+                    : `RECONNECT NEEDED FOR ${project?.name || "gcontext"} → ${
+                        [...(clientBehind.new_commands || []).map(n => "/" + n), ...(clientBehind.removed_commands || []).map(n => "-" + n)].join(" , ") || (clientBehind.agent_md_changed ? "agent.md changed" : "changes pending")
+                      }`
+                }
+                {clientBehind.reason !== "server_stale" && <span style={{ opacity: 0.7, marginLeft: 8 }}>Run /mcp in Claude Code to sync</span>}
+              </div>
+            )}
             {err && (
               <div style={{ marginBottom: 22, background: C.missFill, border: `1px solid ${C.missBorder}`, color: C.missText, borderRadius: 7, padding: "11px 13px", fontSize: 13 }}>
                 Cannot reach the gcontext server: {err}. Is `gcontext up` running?

@@ -30,6 +30,7 @@ YELLOW = "\033[33m"
 RESET = "\033[0m"
 
 DEFAULT_PORT = 4242
+PORT_LOCKFILE = ".gcontext-port"
 
 # The reload rule from docs/setup-script.md: one wording, reused everywhere.
 RESTART_RULE = ("Run `gcontext reload`, then reconnect in your client (`/mcp` in Claude Code) "
@@ -171,6 +172,19 @@ def find_project_dir(path: str | None) -> Path:
 def resolve_port(args, project_dir: Path) -> int:
     if getattr(args, "port", None):
         return args.port
+    env = os.environ.get("GCONTEXT_PORT")
+    if env:
+        try:
+            return int(env)
+        except ValueError:
+            print(f"Error: GCONTEXT_PORT='{env}' is not a valid number.", file=sys.stderr)
+            sys.exit(1)
+    lockfile = project_dir / PORT_LOCKFILE
+    if lockfile.exists():
+        try:
+            return int(lockfile.read_text().strip())
+        except (ValueError, OSError):
+            pass
     config = state.load_gcontext_yaml(project_dir)
     raw = config.get("port", DEFAULT_PORT)
     try:
@@ -178,6 +192,16 @@ def resolve_port(args, project_dir: Path) -> int:
     except (TypeError, ValueError):
         print(f"Error: port value '{raw}' in gcontext.yaml is not a valid number.", file=sys.stderr)
         sys.exit(1)
+
+
+def write_port_lockfile(project_dir: Path, port: int) -> None:
+    (project_dir / PORT_LOCKFILE).write_text(str(port))
+
+
+def remove_port_lockfile(project_dir: Path) -> None:
+    lockfile = project_dir / PORT_LOCKFILE
+    if lockfile.exists():
+        lockfile.unlink()
 
 
 def server_url(port: int) -> str:
@@ -336,6 +360,7 @@ def cmd_up(args):
     n_commands = server.register_commands()
     n_base_lines, n_instruction_lines = server.load_instructions()
     server.snapshot_startup_files()
+    server.freeze_boot_prompts()
 
     print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} serving {name} {DIM}({__version__}){RESET}")
     print(f"{DIM}State: {project_dir}{RESET}")
@@ -384,10 +409,14 @@ def cmd_up(args):
     print("Next: connect your client with the command above (already connected: /mcp to reconnect).")
     print()
 
-    server.mcp.run(
-        transport="http", host="127.0.0.1", port=port, path="/mcp",
-        show_banner=False, log_level="warning", stateless_http=True,
-    )
+    write_port_lockfile(project_dir, port)
+    try:
+        server.mcp.run(
+            transport="http", host="127.0.0.1", port=port, path="/mcp",
+            show_banner=False, log_level="warning", stateless_http=True,
+        )
+    finally:
+        remove_port_lockfile(project_dir)
 
 
 def cmd_status(args):
@@ -908,6 +937,14 @@ def cmd_update(args):
         print("Commands changed: run gcontext reload to re-register them, then reconnect the client (/mcp in Claude Code).")
 
 
+def cmd_statusline(args):
+    project_dir = find_project_dir(args.project)
+    port = resolve_port(args, project_dir)
+    status = fetch_status(port)
+    use_color = getattr(args, "color", False)
+    print(server.format_statusline(status, color=use_color))
+
+
 def cmd_search(args):
     try:
         entries = registry_mod.search_catalog(args.query or "")
@@ -983,6 +1020,10 @@ def main():
     search_parser = subparsers.add_parser("search", help="Search the agent registry")
     search_parser.add_argument("query", nargs="?", default="", help="Substring to match against id, name, description, tags")
 
+    statusline_parser = subparsers.add_parser("statusline", help="One-line server state for Claude Code statusline or claude-hud")
+    add_common(statusline_parser)
+    statusline_parser.add_argument("--color", action="store_true", help="Enable ANSI color codes in output")
+
     args = parser.parse_args()
 
     commands = {
@@ -997,6 +1038,7 @@ def main():
         "share": cmd_share,
         "update": cmd_update,
         "search": cmd_search,
+        "statusline": cmd_statusline,
     }
     if args.command in commands:
         commands[args.command](args)

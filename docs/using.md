@@ -45,21 +45,45 @@ The dashboard's copy buttons produce exactly this form, so you can browse a file
 
 ## What needs a reload, what needs a reconnect
 
-Most edits are live immediately: the server reads state files on demand. The exceptions load at server start, and `gcontext reload` re-runs that loading on the running server. Some changes additionally need a client reconnect (`/mcp` in Claude Code), because the client receives them only at connect time.
+Most edits are live immediately: the server reads state files on demand. The exceptions load at server start. When you make these edits through the MCP tools (`write_file`, `agent install`, `agent update`), the server reloads itself. You do not run `gcontext reload` for tool-driven edits.
 
-| Change | `gcontext reload` | Client reconnect (`/mcp`) |
+For hand edits outside the tools (editing files with your editor), run `gcontext reload` to apply the changes.
+
+Some changes also need a client reconnect (`/mcp` in Claude Code), because Claude Code reads the prompt list and instructions only at connect time.
+
+| Change | Reload | Client reconnect (`/mcp`) |
 |---|---|---|
-| Edit `agent.md` | yes | yes (it is delivered in the MCP handshake) |
-| Edit the body of an existing command file | yes | no (the client fetches the body at invocation) |
-| Add or remove a command file | yes | yes (the prompt list changed) |
-| New template entry created by a `write_file` | no (templates re-expand on write) | yes |
-| Toggle a command in `controls.yaml` | yes | yes (the prompt list changed) |
+| Edit `agent.md` | automatic (tool) or `gcontext reload` (hand) | yes (delivered in the MCP handshake) |
+| Edit the body of an existing command file | automatic (tool) or `gcontext reload` (hand) | no (the client fetches the body at invocation) |
+| Add or remove a command file | automatic (tool) or `gcontext reload` (hand) | yes (the prompt list changed) |
+| New template entry created by a `write_file` | automatic | yes |
+| Toggle a command in `controls.yaml` | automatic (tool) or `gcontext reload` (hand) | yes (the prompt list changed) |
 | Toggle a resource in `controls.yaml` | no (re-read on every listing) | no |
 | Change `pinned` in `controls.yaml` | no (re-read on every listing) | no |
 | Edit `secrets.env` | no (read per script run) | no |
 | Add a connection or module folder | no (scanned per tool call) | no |
 
-You do not have to memorize the reconnect column: the `gcontext reload` output ends with either `Live now.` or `Reconnect your client to pick this up (/mcp in Claude Code).`, and `gcontext status` tells you when a reload is pending.
+### Knowing when to reconnect
+
+The `gcontext statusline` command prints one line for use in Claude Code's statusline or claude-hud:
+
+- `gcontext ok` when everything is current.
+- `gcontext: RECONNECT NEEDED FOR <agent> --> /new_cmd , -removed_cmd` when the client is behind.
+- `gcontext: STALE, run gcontext reload` when hand edits have not been reloaded.
+- `gcontext down` when the server is not running.
+
+Wire it into Claude Code's statusLine setting:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "gcontext statusline <project-dir>"
+  }
+}
+```
+
+Add `--color` to enable blue ANSI highlighting for the alert lines.
 
 One case needs a full restart instead of a reload: when the running server was started by an older gcontext version than the one now installed. `gcontext reload` detects this and prints:
 

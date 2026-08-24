@@ -15,6 +15,7 @@ The actual work lives in the per-concern modules:
 If it is not in this file, the agent cannot invoke it.
 """
 
+import hashlib
 import itertools
 import json
 import sys
@@ -69,6 +70,117 @@ _last_stale_check = 0.0
 # reset once heal+load succeed again.
 _CONTROLS_WARNED = False
 
+# Prompt set frozen after initial registration, before any client connects.
+BOOT_PROMPTS: set[str] = set()
+
+# Snapshot of what the last client handshake received.
+LAST_SERVED: dict = {}
+
+
+def _agent_md_hash() -> str:
+    path = PROJECT_DIR / "agent.md"
+    if not path.exists():
+        return ""
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+
+
+def current_prompt_names() -> set[str]:
+    return set(commands_mod._REGISTERED.keys())
+
+
+def snapshot_last_served() -> None:
+    global LAST_SERVED
+    LAST_SERVED = {
+        "prompts": current_prompt_names(),
+        "agent_md_hash": _agent_md_hash(),
+        "at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def freeze_boot_prompts() -> None:
+    global BOOT_PROMPTS
+    BOOT_PROMPTS = current_prompt_names().copy()
+
+
+def client_behind() -> dict:
+    current = current_prompt_names()
+    md_hash = _agent_md_hash()
+
+    if not LAST_SERVED:
+        return {
+            "behind": True,
+            "reason": "server_restarted",
+            "new_commands": [],
+            "removed_commands": [],
+            "agent_md_changed": False,
+            "served_at": None,
+        }
+
+    if _STALE.get("commands") or _STALE.get("agent_md"):
+        return {
+            "behind": True,
+            "reason": "server_stale",
+            "new_commands": [],
+            "removed_commands": [],
+            "agent_md_changed": False,
+            "served_at": LAST_SERVED.get("at"),
+        }
+
+    served_prompts = LAST_SERVED.get("prompts", set())
+    new = sorted(current - served_prompts)
+    removed = sorted(served_prompts - current)
+    md_changed = md_hash != LAST_SERVED.get("agent_md_hash", "")
+
+    if not new and not removed and not md_changed:
+        return {
+            "behind": False,
+            "reason": None,
+            "new_commands": [],
+            "removed_commands": [],
+            "agent_md_changed": False,
+            "served_at": LAST_SERVED.get("at"),
+        }
+
+    reason = "agent_md_changed" if md_changed and not new and not removed else "commands_changed"
+    return {
+        "behind": True,
+        "reason": reason,
+        "new_commands": new,
+        "removed_commands": removed,
+        "agent_md_changed": md_changed,
+        "served_at": LAST_SERVED.get("at"),
+    }
+
+
+def format_statusline(status: dict | None, color: bool = False) -> str:
+    if status is None:
+        return "gcontext down"
+
+    cb = status.get("client_behind", {})
+    if not cb.get("behind"):
+        line = "gcontext ok"
+        if color:
+            line = f"\033[32m{line}\033[0m"
+        return line
+
+    reason = cb.get("reason", "")
+    name = status.get("name", "gcontext")
+
+    if reason == "server_stale":
+        line = "gcontext: STALE, run gcontext reload"
+    elif reason == "server_restarted":
+        line = f"gcontext: RECONNECT NEEDED FOR {name} --> server restarted"
+    else:
+        items = [f"/{n}" for n in cb.get("new_commands", [])]
+        items += [f"-{n}" for n in cb.get("removed_commands", [])]
+        if cb.get("agent_md_changed") and not items:
+            items = ["agent.md changed"]
+        line = f"gcontext: RECONNECT NEEDED FOR {name} --> " + " , ".join(items)
+
+    if color:
+        line = f"\033[33m{line}\033[0m"
+    return line
+
 
 def _mtime(path: Path) -> float | None:
     try:
@@ -116,12 +228,12 @@ def check_staleness(force: bool = False) -> dict:
             _STALE["commands"] = True
     if _STALE["agent_md"] and not _STALE_WARNED["agent_md"]:
         _STALE_WARNED["agent_md"] = True
-        print("  ! agent.md changed since start; run gcontext reload, then "
-              "reconnect the client to push the new version", file=sys.stderr)
+        print("  ! agent.md changed outside tools; run gcontext reload, "
+              "then /mcp to push the new version", file=sys.stderr)
     if _STALE["commands"] and not _STALE_WARNED["commands"]:
         _STALE_WARNED["commands"] = True
-        print("  ! commands changed since start; run gcontext reload to "
-              "re-register them", file=sys.stderr)
+        print("  ! commands changed outside tools; run gcontext reload",
+              file=sys.stderr)
     return dict(_STALE)
 
 # Activity feed for the dashboard: in-memory ring buffer, gone on restart.
@@ -192,6 +304,7 @@ class ConnectionTracker(Middleware):
             "connected": now,
             "last_seen": now,
         }
+        snapshot_last_served()
         record_event(_session_id(context), "connect", client,
                      detail=version, tier=0)
         print(f"  + {client} {version} connected ({now})", file=sys.stderr)
@@ -337,6 +450,7 @@ async def status_route(request: Request) -> JSONResponse:
         "project_dir": str(PROJECT_DIR.resolve()),
         "sessions": list(SESSIONS.values()),
         "stale": check_staleness(force=True),
+        "client_behind": client_behind(),
     })
 
 
@@ -384,6 +498,36 @@ def load_instructions() -> tuple[int, int]:
     text = instructions.read_text()
     mcp.instructions = f"{base}\n{text}"
     return len(base.splitlines()), len(text.splitlines())
+
+
+_RELOADING = False
+
+
+def _path_needs_reload(path: str) -> bool:
+    from fnmatch import fnmatch
+    if path in ("controls.yaml", "agent.md"):
+        return True
+    for glob in controls_mod.COMMAND_GLOBS:
+        if fnmatch(path, glob):
+            return True
+    return False
+
+
+def _self_reload(context: str = "") -> str | None:
+    global _RELOADING
+    if _RELOADING:
+        return None
+    _RELOADING = True
+    try:
+        report = reload()
+    finally:
+        _RELOADING = False
+    if "error" in report:
+        return f"Reload failed ({context}): {report['error']}. Server kept previous state."
+    behind = client_behind()
+    if behind.get("behind"):
+        return f"Server reloaded ({report['project_commands']} commands). Client reconnect needed: /mcp"
+    return f"Server reloaded ({report['project_commands']} commands)."
 
 
 def reload() -> dict:
@@ -514,11 +658,17 @@ def write_file(path: str, content: str) -> str:
         commands_mod.refresh_generated(mcp, PROJECT_DIR, path)
     except Exception as e:
         print(f"  ! generated-command refresh failed: {e}", file=sys.stderr)
+    healed = False
     try:
-        if controls_mod.heal(PROJECT_DIR):
+        healed = controls_mod.heal(PROJECT_DIR)
+        if healed:
             _resnapshot_manifest()
     except controls_mod.ControlsError:
-        pass  # bad hand edit; the next list_resources warns
+        pass
+    if _path_needs_reload(path) or healed:
+        note = _self_reload(context=f"write_file {path}")
+        if note:
+            result = f"{result}\n{note}"
     return result
 
 
@@ -650,6 +800,9 @@ def agent(action: str, id: str = "", query: str = "") -> str:
                     report_strings.CONNECTION_EXISTS_LINE.format(kind=conn["kind"])
                 )
         lines.append(f"Next step: run the setup in {result['path']}/commands/setup.md")
+        note = _self_reload(context=f"agent install {id}")
+        if note:
+            lines.append(note)
         return "\n".join(lines)
 
     elif action == "check":
@@ -679,7 +832,12 @@ def agent(action: str, id: str = "", query: str = "") -> str:
             _register_agent_commands(report["id"])
             _notify_prompts_changed()
             snapshot_startup_files()
-        return registry_mod.format_update_report(report)
+        result_text = registry_mod.format_update_report(report)
+        if report.get("commands_changed"):
+            note = _self_reload(context=f"agent update {id}")
+            if note:
+                result_text = f"{result_text}\n{note}"
+        return result_text
 
     return f"Error: unknown action '{action}'. Use search, install, check, or update."
 

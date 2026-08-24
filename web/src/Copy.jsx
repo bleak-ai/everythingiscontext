@@ -4,7 +4,7 @@ import { copyText } from "./lib.js";
 
 // The one action surface in the app: copy a resource reference for the agent,
 // fire a toast. The dashboard SEES the project; the agent (via MCP) USES it,
-// so every action hands an @server:gcontext://path reference to the clipboard.
+// so every action hands a gcontext://path reference to the clipboard.
 //   full pill  -> <CopyPrompt text=… />           (⧉ Copy reference, terracotta)
 //   icon only  -> <CopyPrompt text=… icon />      (26x26 ⧉, list rows)
 export default function CopyPrompt({ text, label = "Copy reference", toast = "Copied, paste it into your agent", title, icon, style }) {

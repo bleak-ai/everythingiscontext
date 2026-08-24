@@ -73,18 +73,18 @@ Cause: the connection declares the secret name in `connection.yaml`, but `secret
 
 Three causes, in order of likelihood:
 
-1. **The server has not registered it yet.** Command files load at server start; `gcontext status` tells you when they changed since:
+1. **The server has not registered it yet.** When commands are added through the MCP tools (`write_file`, `agent install`), the server reloads itself. For hand edits, the server console warns:
 
    ```
-   commands changed since server start; run gcontext reload to re-register them
+   commands changed outside tools; run gcontext reload
    ```
 
-   Run `gcontext reload`.
+   Run `gcontext reload`. The `gcontext statusline` command also shows `STALE, run gcontext reload` in this state.
 
-2. **The client has a stale prompt list.** After a reload that added or removed commands, the reload output ends with:
+2. **The client has a stale prompt list.** After a reload that added or removed commands, the statusline shows:
 
    ```
-   Reconnect your client to pick this up (/mcp in Claude Code).
+   gcontext: RECONNECT NEEDED FOR <agent> --> /new_command
    ```
 
    Type `/mcp` in Claude Code and reconnect the server.
@@ -117,14 +117,14 @@ Cause: `controls.yaml` is the on/off registry for everything the server exposes,
 
 You changed `agent.md` and the connected session still behaves like before.
 
-Cause: `agent.md` is delivered inside the MCP connect handshake, so it takes both a reload and a reconnect. `gcontext status` reminds you:
+Cause: `agent.md` is delivered inside the MCP connect handshake, so it takes both a reload and a reconnect. When edited through the MCP tools, the server reloads itself. For hand edits, the server console warns:
 
 ```
-agent.md changed since server start; run gcontext reload to push the new version
+agent.md changed outside tools; run gcontext reload, then /mcp to push the new version
 ```
 
-1. Run `gcontext reload`. It confirms: `agent.md: reloaded, delivered to clients at their next connect.`
-2. Reconnect the client: `/mcp` in Claude Code.
+1. For hand edits: run `gcontext reload`. It confirms: `agent.md: reloaded, delivered to clients at their next connect.`
+2. Reconnect the client: `/mcp` in Claude Code. The statusline shows `RECONNECT NEEDED` until you do.
 
 The full table of which change needs which step is in [using.md](using.md#what-needs-a-reload-what-needs-a-reconnect).
 
