@@ -1,0 +1,19 @@
+# controls.yaml: the on/off registry for everything this agent exposes.
+# The server maintains it; the dashboard Controls tab can flip entries.
+# Format: https://github.com/bleak-ai/gcontext/blob/main/docs/reference.md#controls
+
+commands:
+  framework/agents: on
+  framework/ask: on
+  framework/explain: on
+  framework/setup: off
+  m/craft: off
+
+resources:
+  modules/m: on
+
+# user comment that must survive
+pinned: []
+
+names:
+  m/craft: craft-post

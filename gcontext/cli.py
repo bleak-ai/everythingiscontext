@@ -32,7 +32,7 @@ PORT_LOCKFILE = ".gcontext-port"
 
 # The reload rule from docs/setup-script.md: one wording, reused everywhere.
 RESTART_RULE = ("Run `gcontext reload`, then reconnect in your client (`/mcp` in Claude Code) "
-                "if it reports a reconnect is needed. If the server is stopped: `gcontext up`.")
+                "if it reports a reconnect is needed. If the server is stopped: `gcontext serve`.")
 
 STATUS_COLOR = {
     "loaded": GREEN,
@@ -281,7 +281,7 @@ def cmd_reload(args):
         sys.exit(1)
 
 
-def cmd_up(args):
+def cmd_serve(args):
     project_dir = find_project_dir(args.project)
     server.PROJECT_DIR = project_dir
     name = project_dir.name
@@ -636,6 +636,15 @@ def cmd_install(args):
     print(f"Dependencies: {deps_status}")
 
 
+def cmd_check(args):
+    project_dir = find_project_dir(args.project)
+    result = subprocess.run(
+        ["uv", "run", "context/_system/scripts/check.py", "--check"],
+        cwd=project_dir,
+    )
+    sys.exit(result.returncode)
+
+
 def cmd_statusline(args):
     project_dir = find_project_dir(args.project)
     port = resolve_port(args, project_dir)
@@ -659,8 +668,12 @@ def main():
         p.add_argument("project", nargs="?", help="Path to gcontext project directory")
         p.add_argument("--port", type=int, help=f"Server port (default: {DEFAULT_PORT})")
 
-    up_parser = subparsers.add_parser("up", help="Start the server. Clients connect to its URL")
-    add_common(up_parser)
+    serve_parser = subparsers.add_parser(
+        "serve",
+        aliases=["up"],
+        help="Start the server. Clients connect to its URL",
+    )
+    add_common(serve_parser)
 
     status_parser = subparsers.add_parser("status", help="Server up? Who is connected? Plus connections, secrets, modules")
     add_common(status_parser)
@@ -686,6 +699,11 @@ def main():
     install_parser.add_argument("--project", help="Project root that contains context/")
     install_parser.add_argument("--skip-secrets", action="store_true", help="Install even if required secrets are missing")
 
+    check_parser = subparsers.add_parser(
+        "check", help="Check the context standard in a project"
+    )
+    check_parser.add_argument("project", nargs="?", help="Project root that contains context/")
+
     statusline_parser = subparsers.add_parser("statusline", help="One-line server state for Claude Code statusline or claude-hud")
     add_common(statusline_parser)
     statusline_parser.add_argument("--color", action="store_true", help="Enable ANSI color codes in output")
@@ -694,12 +712,14 @@ def main():
 
     commands = {
         "init": cmd_init,
-        "up": cmd_up,
+        "serve": cmd_serve,
+        "up": cmd_serve,
         "status": cmd_status,
         "reload": cmd_reload,
         "connect": cmd_connect,
         "context": cmd_context,
         "install": cmd_install,
+        "check": cmd_check,
         "statusline": cmd_statusline,
     }
     if args.command in commands:
