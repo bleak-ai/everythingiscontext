@@ -30,15 +30,5 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["gcontext"]
 
-# The built dashboard rides inside the wheel; hatchling fails the build if
-# web/dist is missing, so `make build` (vite first) is the only build path.
-# artifacts: web/dist is gitignored, and hatchling drops VCS-ignored files
-# unless they are declared as build artifacts.
-[tool.hatch.build]
-artifacts = ["web/dist"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"web/dist" = "gcontext/web_dist"
-
 [tool.hatch.build.targets.sdist]
-only-include = ["gcontext", "web/dist", "tests", "README.md", "LICENSE"]
+only-include = ["gcontext", "tests", "README.md", "LICENSE"]

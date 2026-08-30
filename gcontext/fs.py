@@ -11,8 +11,7 @@ import fnmatch
 import re
 from pathlib import Path
 
-# Machine folders: never served to the dashboard browser, skipped by
-# list_dir and grep.
+# Machine folders are skipped by list_dir and grep.
 SKIP_DIRS = {".venv", ".git", "__pycache__", "node_modules"}
 SKIP_FILES = {".installed", ".template.yaml", ".venv-sync.lock", ".controls.lock"}
 BROWSER_BLOCKED = SKIP_DIRS
@@ -36,7 +35,7 @@ def resolve_path(root: Path, path: str) -> tuple[Path | None, str | None]:
 
 
 def resolve_browser_path(root: Path, path: str) -> tuple[Path | None, str | None]:
-    """Resolve a dashboard read to (target, None) or (None, error).
+    """Resolve a browser read to (target, None) or (None, error).
 
     Same confinement as read_file, plus the browser surface never sees
     machine folders. secrets.env stays unreadable everywhere.

@@ -226,7 +226,7 @@ def resource_enabled(reg: Registry, key: str) -> bool:
 
 SCAFFOLD_HEADER = (
     "# controls.yaml: the on/off registry for everything this agent exposes.\n"
-    "# The server maintains it; the dashboard Controls tab can flip entries.\n"
+    "# The server maintains it.\n"
     "# Format: https://github.com/bleak-ai/gcontext/blob/main/docs/reference.md#controls\n"
 )
 

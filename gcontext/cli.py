@@ -366,7 +366,6 @@ def cmd_up(args):
     print(f"{DIM}State: {project_dir}{RESET}")
     print()
     print(f"Serving at {BOLD}{url}{RESET}")
-    print(f"Dashboard:  http://127.0.0.1:{port}/")
     print()
     env_file = project_dir / "secrets.env"
     if env_file.exists() and (env_file.stat().st_mode & 0o077):

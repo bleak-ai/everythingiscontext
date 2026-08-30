@@ -16,11 +16,8 @@ If it is not in this file, the agent cannot invoke it.
 """
 
 import hashlib
-import itertools
-import json
 import sys
 import time
-from collections import deque
 from datetime import datetime
 from pathlib import Path
 
@@ -236,57 +233,9 @@ def check_staleness(force: bool = False) -> dict:
               file=sys.stderr)
     return dict(_STALE)
 
-# Activity feed for the dashboard: in-memory ring buffer, gone on restart.
-EVENTS: deque = deque(maxlen=300)
-_EVENT_SEQ = itertools.count(1)
-
-
 def _session_id(context) -> str:
     ctx = getattr(context, "fastmcp_context", None)
     return getattr(ctx, "session_id", None) or "session"
-
-
-def record_event(session: str, kind: str, name: str, detail: str = "",
-                 preview: str = "", error: bool = False, tier: int = 1,
-                 tokens_in: int = 0, tokens_out: int = 0, duration_ms: int = 0):
-    EVENTS.append({
-        "id": next(_EVENT_SEQ),
-        "ts": int(time.time() * 1000),
-        "session": session,
-        "kind": kind,
-        "name": name,
-        "detail": detail,
-        "preview": preview,
-        "error": error,
-        "tier": tier,
-        "tokens_in": tokens_in,
-        "tokens_out": tokens_out,
-        "duration_ms": duration_ms,
-    })
-
-
-def _event_detail(name: str, arguments: dict) -> str:
-    """Summarize tool arguments for the feed. Never file content or code:
-    the feed goes to a browser, tool arguments may hold whole documents."""
-    if name == "write_file":
-        path = arguments.get("path", "?")
-        return f"{path} ({len(arguments.get('content') or '')} bytes)"
-    if name == "grep":
-        pattern = arguments.get("pattern", "?")
-        path = arguments.get("path") or "."
-        return f"{pattern!r} in {path}"
-    if name == "run_script":
-        return str(arguments.get("path", "?"))
-    if name == "run_adhoc_script":
-        return f"inline code ({len(arguments.get('code') or '')} chars)"
-    if arguments.get("path"):
-        return str(arguments["path"])
-    return ", ".join(sorted(arguments)) if arguments else ""
-
-
-def _result_text(result) -> str:
-    content = getattr(result, "content", None) or []
-    return "\n".join(t for t in (getattr(b, "text", None) for b in content) if t)
 
 
 class ConnectionTracker(Middleware):
@@ -305,39 +254,11 @@ class ConnectionTracker(Middleware):
             "last_seen": now,
         }
         snapshot_last_served()
-        record_event(_session_id(context), "connect", client,
-                     detail=version, tier=0)
         print(f"  + {client} {version} connected ({now})", file=sys.stderr)
         return await call_next(context)
 
     async def on_call_tool(self, context, call_next):
         check_staleness()
-        name = getattr(context.message, "name", "?")
-        arguments = getattr(context.message, "arguments", None) or {}
-        detail = _event_detail(name, arguments)
-        tokens_in = len(json.dumps(arguments, default=str)) // 4
-        start = time.perf_counter()
-        try:
-            result = await call_next(context)
-        except Exception as exc:
-            record_event(_session_id(context), "error", name, detail=detail,
-                         preview=str(exc)[:400], error=True, tokens_in=tokens_in,
-                         duration_ms=round((time.perf_counter() - start) * 1000))
-            raise
-        text = _result_text(result)
-        preview = secrets_mod.scrub(text[:400], secrets_mod.load(PROJECT_DIR))
-        record_event(_session_id(context), "tool", name, detail=detail,
-                     preview=preview, error=text.startswith("Error:"),
-                     tokens_in=tokens_in, tokens_out=len(text) // 4,
-                     duration_ms=round((time.perf_counter() - start) * 1000))
-        return result
-
-    async def on_get_prompt(self, context, call_next):
-        name = getattr(context.message, "name", "?")
-        arguments = getattr(context.message, "arguments", None) or {}
-        record_event(_session_id(context), "prompt", name,
-                     detail=", ".join(sorted(arguments)) if arguments else "",
-                     tier=2)
         return await call_next(context)
 
     async def on_list_resources(self, context, call_next):
@@ -422,15 +343,10 @@ class ConnectionTracker(Middleware):
     async def on_read_resource(self, context, call_next):
         from fastmcp.resources.base import ResourceResult
         uri = str(getattr(context.message, "uri", "?"))
-        start = time.perf_counter()
         text = _resolve_resource_uri(uri)
         if text is not None:
-            result = ResourceResult(text)
-        else:
-            result = await call_next(context)
-        record_event(_session_id(context), "resource", "resource", detail=uri,
-                     duration_ms=round((time.perf_counter() - start) * 1000))
-        return result
+            return ResourceResult(text)
+        return await call_next(context)
 
     async def on_message(self, context, call_next):
         session = SESSIONS.get(_session_id(context))
@@ -575,7 +491,7 @@ def reload() -> dict:
 @mcp.custom_route("/api/reload", methods=["POST"])
 async def reload_route(request: Request) -> JSONResponse:
     """Apply state edits to the running server. Localhost only, same trust
-    model as /status and the dashboard: the server binds 127.0.0.1."""
+    model as /status: the server binds 127.0.0.1."""
     report = reload()
     if "error" in report:
         return JSONResponse(report, status_code=500)
@@ -840,6 +756,3 @@ def agent(action: str, id: str = "", query: str = "") -> str:
         return result_text
 
     return f"Error: unknown action '{action}'. Use search, install, check, or update."
-
-
-from . import dashboard  # noqa: E402,F401  registers /api/* and the static catch-all
