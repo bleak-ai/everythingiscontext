@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from fastmcp import Client, FastMCP
 
-from gcontext import commands, controls, ledger, server
+from gcontext import commands, ledger, server
 
 MD_COMMAND = """\
 ---
@@ -29,19 +29,14 @@ print("would cancel")
 
 
 @pytest.fixture(autouse=True)
-def _reset_manifest():
-    commands._REGISTRY = controls.Registry()
-    commands._ROOT = None
+def _reset_commands():
     commands._STABLE_KEYS.clear()
     commands._REGISTERED.clear()
     commands.GENERATED.clear()
     yield
-    commands._REGISTRY = controls.Registry()
-    commands._ROOT = None
     commands._STABLE_KEYS.clear()
     commands._REGISTERED.clear()
     commands.GENERATED.clear()
-
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
@@ -463,31 +458,7 @@ def test_register_framework_prompts_setup():
         assert step in filled_text
 
 
-# -- manifest & stable-key tests --
-
-
-def test_load_manifest_returns_registry(tmp_path):
-    (tmp_path / "controls.yaml").write_text(
-        "commands:\n  framework/explain: off\nresources:\n  modules/m: off\n"
-    )
-    reg = commands.load_manifest(tmp_path)
-    assert reg.commands["framework/explain"] is False
-    assert commands.is_resource_hidden("modules/m") is True
-    assert commands.is_resource_hidden("modules/other") is False
-
-
-def test_load_manifest_missing_file_returns_empty(tmp_path):
-    reg = commands.load_manifest(tmp_path)
-    assert reg.commands == {} and reg.resources == {}
-
-
-def test_load_manifest_malformed_keeps_last_good(tmp_path):
-    (tmp_path / "controls.yaml").write_text("commands:\n  a/x: off\n")
-    commands.load_manifest(tmp_path)
-    (tmp_path / "controls.yaml").write_text("commands:\n\t- bad\n")
-    with pytest.raises(controls.ControlsError):
-        commands.load_manifest(tmp_path)
-    assert commands._REGISTRY.commands == {"a/x": False}
+# -- stable-key tests --
 
 
 def test_stable_key_project_command(tmp_path):
@@ -505,131 +476,12 @@ def test_stable_key_framework(tmp_path):
     assert commands._stable_key(path, tmp_path) == "framework/setup"
 
 
-def test_manifest_disables_project_command(tmp_path):
-    _write_commands(tmp_path)
-    (tmp_path / "controls.yaml").write_text(
-        "commands:\n  support/refund_reply: off\n"
-    )
-    commands.load_manifest(tmp_path)
-    mcp = FastMCP("t")
-    commands.register_commands(mcp, tmp_path)
-    names = asyncio.run(_prompt_names(mcp))
-    assert "refund_reply" not in names
-    assert "cancel" in names
-
-
-def test_resource_off_does_not_cascade_to_commands(tmp_path):
-    _write_commands(tmp_path)
-    (tmp_path / "controls.yaml").write_text(
-        "resources:\n  modules/support: off\n"
-    )
-    commands.load_manifest(tmp_path)
-    mcp = FastMCP("t")
-    commands.register_commands(mcp, tmp_path)
-    names = asyncio.run(_prompt_names(mcp))
-    # resource off no longer disables commands
-    assert "refund_reply" in names
-    assert "cancel" in names
-
-
-def test_explicit_off_disables_under_any_owner(tmp_path):
-    _write_commands(tmp_path)
-    (tmp_path / "controls.yaml").write_text(
-        "commands:\n  support/refund_reply: off\n"
-        "resources:\n  modules/support: off\n"
-    )
-    commands.load_manifest(tmp_path)
-    mcp = FastMCP("t")
-    commands.register_commands(mcp, tmp_path)
-    assert "refund_reply" not in asyncio.run(_prompt_names(mcp))
-
-
-def test_no_manifest_registers_all(tmp_path):
-    _write_commands(tmp_path)
-    commands.load_manifest(tmp_path)
-    mcp = FastMCP("t")
-    n = commands.register_commands(mcp, tmp_path)
-    assert n > 0
-
-
-def test_explicit_off_command_disables_registration(tmp_path):
-    _write_commands(tmp_path)
-    (tmp_path / "controls.yaml").write_text(
-        "commands:\n  support/refund_reply: off\n"
-    )
-    commands.load_manifest(tmp_path)
-    mcp = FastMCP("t")
-    commands.register_commands(mcp, tmp_path)
-    names = asyncio.run(_prompt_names(mcp))
-    assert "refund_reply" not in names
-    assert "cancel" in names
-
-
-def test_manifest_disables_framework_prompt(tmp_path):
-    (tmp_path / "controls.yaml").write_text(
-        "commands:\n  framework/explain: off\n"
-    )
-    mcp_inst = FastMCP("t")
-    commands.load_manifest(tmp_path)
-    commands.register_framework_prompts(mcp_inst, tmp_path)
-    names = {p.name for p in asyncio.run(_prompts(mcp_inst))}
-    assert "setup" in names
-    assert "agents" in names
-    assert "ask" in names
-    assert "explain" not in names
-
-
-def test_manifest_disables_agent_command_at_install(tmp_path):
-    (tmp_path / "controls.yaml").write_text(
-        "commands:\n  newmod/deploy: off\n"
-    )
-    mcp_inst = FastMCP("t")
-    commands.load_manifest(tmp_path)
-    commands.register_commands(mcp_inst, tmp_path)
-    d = tmp_path / "agents" / "newmod" / "commands"
-    d.mkdir(parents=True)
-    (d / "deploy.md").write_text("---\ndescription: d\n---\ndeploy body")
-    commands.register_agent_commands(mcp_inst, tmp_path, "newmod")
-    names = {p.name for p in asyncio.run(_prompts(mcp_inst))}
-    assert "deploy" not in names
-    assert "newmod__deploy" not in names
-
-
-def test_manifest_disables_generated_command(tmp_path):
-    _write_template(tmp_path)
-    (tmp_path / "controls.yaml").write_text(
-        "commands:\n  cookbook/recipe_export-invoices: off\n"
-    )
-    mcp_inst = FastMCP("t")
-    commands.load_manifest(tmp_path)
-    commands.register_commands(mcp_inst, tmp_path)
-    names = {p.name for p in asyncio.run(_prompts(mcp_inst))}
-    assert "recipe_export_invoices" not in names
-    assert "recipe_check_orders" in names
-
-
-def test_manifest_disables_generated_command_via_template_key(tmp_path):
-    """A hidden_commands-style test for the *template's own* key: disabling
-    the template key hides every entry it generates (no per-entry override)."""
-    _write_template(tmp_path)
-    (tmp_path / "controls.yaml").write_text(
-        "commands:\n  cookbook/recipe: off\n"
-    )
-    mcp_inst = FastMCP("t")
-    commands.load_manifest(tmp_path)
-    commands.register_commands(mcp_inst, tmp_path)
-    names = {p.name for p in asyncio.run(_prompts(mcp_inst))}
-    assert "recipe_export_invoices" not in names
-    assert "recipe_check_orders" not in names
-
-
 # -- reregister_all tests --
 
 
 def test_reregister_all_drops_deleted_command(tmp_path):
     _write_commands(tmp_path)
     mcp = FastMCP("t")
-    commands.load_manifest(tmp_path)
     commands.register_framework_prompts(mcp, tmp_path)
     commands.register_commands(mcp, tmp_path)
     assert "refund_reply" in asyncio.run(_prompt_names(mcp))
@@ -644,7 +496,6 @@ def test_reregister_all_drops_deleted_command(tmp_path):
 def test_reregister_all_adds_new_command_once(tmp_path):
     _write_commands(tmp_path)
     mcp = FastMCP("t")
-    commands.load_manifest(tmp_path)
     commands.register_framework_prompts(mcp, tmp_path)
     commands.register_commands(mcp, tmp_path)
     d = tmp_path / "modules" / "support" / "commands"
@@ -662,179 +513,11 @@ def test_reregister_all_adds_new_command_once(tmp_path):
     assert sorted(names2) == sorted(names)
 
 
-def test_reregister_all_applies_command_toggle(tmp_path):
-    _write_commands(tmp_path)
-    mcp = FastMCP("t")
-    commands.load_manifest(tmp_path)
-    commands.register_framework_prompts(mcp, tmp_path)
-    commands.register_commands(mcp, tmp_path)
-    assert "cancel" in asyncio.run(_prompt_names(mcp))
-    (tmp_path / "controls.yaml").write_text("commands:\n  stripe/cancel: off\n")
-    commands.load_manifest(tmp_path)
-    report = commands.reregister_all(mcp, tmp_path)
-    names = asyncio.run(_prompt_names(mcp))
-    assert "cancel" not in names
-    assert "cancel" in report["removed"]
-    assert "refund_reply" in names
-
-
 def test_reregister_all_counts(tmp_path):
     _write_commands(tmp_path)
     mcp = FastMCP("t")
-    commands.load_manifest(tmp_path)
     commands.register_framework_prompts(mcp, tmp_path)
     commands.register_commands(mcp, tmp_path)
     report = commands.reregister_all(mcp, tmp_path)
     assert report["framework"] == 4
     assert report["project"] == 2
-
-
-# -- names override tests --
-
-
-def test_names_override_renames_prompt(tmp_path):
-    d = tmp_path / "modules" / "m" / "commands"
-    d.mkdir(parents=True)
-    (d / "craft.md").write_text("---\ndescription: d\n---\nbody")
-    (tmp_path / "controls.yaml").write_text(
-        "commands:\n  m/craft: on\nnames:\n  m/craft: craft-post\n"
-    )
-    commands.load_manifest(tmp_path)
-    mcp = FastMCP("t")
-    commands.register_commands(mcp, tmp_path)
-    names = asyncio.run(_prompt_names(mcp))
-    assert "craft_post" in names
-    assert "craft" not in names
-    assert commands._STABLE_KEYS["craft_post"] == "m/craft"
-
-
-def test_names_override_collision_keeps_default(tmp_path, capsys):
-    d = tmp_path / "modules" / "m" / "commands"
-    d.mkdir(parents=True)
-    (d / "a.md").write_text("---\ndescription: d\n---\nbody a")
-    (d / "b.md").write_text("---\ndescription: d\n---\nbody b")
-    (tmp_path / "controls.yaml").write_text(
-        "commands:\n  m/a: on\n  m/b: on\nnames:\n  m/b: a\n"
-    )
-    commands.load_manifest(tmp_path)
-    mcp = FastMCP("t")
-    commands.register_commands(mcp, tmp_path)
-    names = asyncio.run(_prompt_names(mcp))
-    assert "a" in names
-    assert "b" in names
-    captured = capsys.readouterr()
-    assert "collides" in captured.err
-
-
-def test_names_override_framework_prompt(tmp_path):
-    (tmp_path / "controls.yaml").write_text(
-        "names:\n  framework/ask: query\n"
-    )
-    commands.load_manifest(tmp_path)
-    mcp = FastMCP("t")
-    commands.register_framework_prompts(mcp, tmp_path)
-    names = asyncio.run(_prompt_names(mcp))
-    assert "query" in names
-    assert "ask" not in names
-
-
-def test_renamed_framework_name_stays_reserved(tmp_path):
-    # Rename framework/ask to "query"; module m has commands/query.md.
-    # The framework prompt holds "query"; the module command must register
-    # under its owner-prefixed fallback.
-    (tmp_path / "controls.yaml").write_text(
-        "names:\n  framework/ask: query\n"
-    )
-    commands.load_manifest(tmp_path)
-    d = tmp_path / "modules" / "m" / "commands"
-    d.mkdir(parents=True)
-    (d / "query.md").write_text("---\ndescription: d\n---\nbody")
-    mcp = FastMCP("t")
-    commands.register_framework_prompts(mcp, tmp_path)
-    commands.register_commands(mcp, tmp_path)
-    names = asyncio.run(_prompt_names(mcp))
-    assert "query" in names
-    # the module command must use the prefixed fallback
-    assert "m__query" in names
-
-
-def test_names_two_keys_same_custom_name(tmp_path, capsys):
-    d = tmp_path / "modules" / "m" / "commands"
-    d.mkdir(parents=True)
-    (d / "a.md").write_text("---\ndescription: d\n---\nbody a")
-    (d / "b.md").write_text("---\ndescription: d\n---\nbody b")
-    (tmp_path / "controls.yaml").write_text(
-        "commands:\n  m/a: on\n  m/b: on\n"
-        "names:\n  m/a: shared\n  m/b: shared\n"
-    )
-    commands.load_manifest(tmp_path)
-    mcp = FastMCP("t")
-    commands.register_commands(mcp, tmp_path)
-    names = asyncio.run(_prompt_names(mcp))
-    # first (sorted) gets "shared", second keeps its default
-    assert "shared" in names
-    assert "b" in names
-    # no command vanished
-    assert len(names) == 2
-    captured = capsys.readouterr()
-    assert "collides" in captured.err
-
-
-def test_names_two_framework_prompts_same_custom_name(tmp_path, capsys):
-    # Rename two framework prompts to the same custom name.
-    (tmp_path / "controls.yaml").write_text(
-        "names:\n  framework/ask: shared\n  framework/explain: shared\n"
-    )
-    commands.load_manifest(tmp_path)
-    mcp = FastMCP("t")
-    commands.register_framework_prompts(mcp, tmp_path)
-    names = asyncio.run(_prompt_names(mcp))
-    # one gets "shared", the other keeps its default
-    assert "shared" in names
-    # the loser kept its original stem
-    assert "ask" in names or "explain" in names
-    captured = capsys.readouterr()
-    assert "collides" in captured.err
-    # all four framework prompts still registered
-    assert len(names) == 4
-
-
-# -- hidden resource tests --
-
-
-def test_is_resource_hidden_no_manifest(tmp_path):
-    commands.load_manifest(tmp_path)
-    assert commands.is_resource_hidden("modules/lab-repo") is False
-
-
-def test_is_resource_hidden_empty_resources(tmp_path):
-    (tmp_path / "controls.yaml").write_text("resources: {}\n")
-    commands.load_manifest(tmp_path)
-    assert commands.is_resource_hidden("modules/lab-repo") is False
-
-
-def test_is_resource_hidden_exact_key(tmp_path):
-    (tmp_path / "controls.yaml").write_text(
-        "resources:\n"
-        "  modules/bot-commenter: off\n"
-        "  connections/hetzner-vps: off\n"
-    )
-    commands.load_manifest(tmp_path)
-    assert commands.is_resource_hidden("modules/bot-commenter") is True
-    assert commands.is_resource_hidden("connections/hetzner-vps") is True
-    assert commands.is_resource_hidden("modules/lab-repo") is False
-    assert commands.is_resource_hidden("root") is False
-
-
-def test_controls_yaml_carries_both_sections(tmp_path):
-    _write_commands(tmp_path)
-    (tmp_path / "controls.yaml").write_text(
-        "commands:\n  stripe/cancel: off\n"
-        "resources:\n  modules/lab-repo: off\n"
-    )
-    mcp_inst = FastMCP("t")
-    commands.load_manifest(tmp_path)
-    commands.register_commands(mcp_inst, tmp_path)
-    names = {p.name for p in asyncio.run(_prompts(mcp_inst))}
-    assert "cancel" not in names
-    assert commands.is_resource_hidden("modules/lab-repo") is True

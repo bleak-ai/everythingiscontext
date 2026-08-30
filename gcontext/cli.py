@@ -78,7 +78,6 @@ INIT_AGENT_GITIGNORE = """\
 secrets.env
 .venv/
 .venv-sync.lock
-.controls.lock
 """
 
 INIT_README = """\
@@ -137,9 +136,6 @@ def cmd_init(args):
         f.write_text(content)
 
     (target / "secrets.env").chmod(0o600)
-
-    from gcontext import controls
-    controls.heal(target)
 
     from gcontext.telemetry import ping_install
     ping_install(install_id, __version__)
@@ -349,13 +345,6 @@ def cmd_up(args):
     url = server_url(port)
 
     exec_mod.ensure_venv(project_dir)
-    from gcontext import controls
-    try:
-        n_off_cmds, n_off_res = server.load_controls()
-    except controls.ControlsError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        print("Fix controls.yaml and run gcontext up again.", file=sys.stderr)
-        sys.exit(1)
     n_framework_prompts = server.register_framework_prompts()
     n_commands = server.register_commands()
     n_base_lines, n_instruction_lines = server.load_instructions()
@@ -395,12 +384,7 @@ def cmd_up(args):
     prompt_bits = [f"{n_framework_prompts} built-in commands ({builtin_names})"]
     if n_commands:
         prompt_bits.append(f"{n_commands} project command(s)")
-    if n_off_cmds:
-        prompt_bits.append(f"{n_off_cmds} off in controls.yaml")
     print(f"Steering: {' + '.join(prompt_bits)}, slash commands in your client.")
-    if n_off_res:
-        print(f"Resources: {n_off_res} off in controls.yaml "
-              "(unlisted, still readable via read_file).")
     print()
     print("Clients appear below as they connect. Ctrl+C stops the server,")
     print("and every client cleanly loses access.")
@@ -985,7 +969,7 @@ def main():
     status_parser = subparsers.add_parser("status", help="Server up? Who is connected? Plus connections, secrets, modules")
     add_common(status_parser)
 
-    reload_parser = subparsers.add_parser("reload", help="Apply agent.md, command, and controls.yaml edits to the running server")
+    reload_parser = subparsers.add_parser("reload", help="Apply agent.md and command edits to the running server")
     add_common(reload_parser)
 
     connect_parser = subparsers.add_parser("connect", help="Show how to point a client at the server URL")

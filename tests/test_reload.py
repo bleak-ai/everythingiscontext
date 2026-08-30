@@ -1,11 +1,11 @@
-"""server.reload(): apply agent.md, command, and controls.yaml edits in place."""
+"""server.reload(): apply agent.md and command edits in place."""
 
 import asyncio
 
 import pytest
 from fastmcp import Client
 
-from gcontext import __version__, cli, commands, controls, server
+from gcontext import __version__, cli, commands, server
 
 MD_COMMAND = """\
 ---
@@ -16,13 +16,9 @@ Draft a refund reply and show it to the user.
 
 
 @pytest.fixture(autouse=True)
-def _reset_manifest():
-    commands._REGISTRY = controls.Registry()
-    commands._ROOT = None
+def _reset_commands():
     commands._STABLE_KEYS.clear()
     yield
-    commands._REGISTRY = controls.Registry()
-    commands._ROOT = None
     commands._STABLE_KEYS.clear()
 
 
@@ -35,7 +31,6 @@ def project(tmp_path, monkeypatch):
     cmd.write_text(MD_COMMAND)
     monkeypatch.setattr(server, "PROJECT_DIR", tmp_path)
     # simulate startup
-    server.load_controls()
     commands.reregister_all(server.mcp, tmp_path)
     server.load_instructions()
     server.snapshot_startup_files()
@@ -62,30 +57,11 @@ def test_reload_picks_up_agent_md_edit(project):
     assert stale == {"agent_md": False, "commands": False}
 
 
-def test_reload_applies_command_toggle(project):
-    assert "refund_reply" in _prompt_names()
-    (project / "controls.yaml").write_text(
-        "commands:\n  support/refund_reply: off\n"
-    )
-    report = server.reload()
-    assert "refund_reply" not in _prompt_names()
-    assert "refund_reply" in report["removed"]
-    assert report["client_reconnect_needed"] is True
-
-
 def test_reload_no_changes_needs_no_reconnect(project):
     report = server.reload()
     assert report["removed"] == [] and report["added"] == []
     assert report["agent_md_changed"] is False
     assert report["client_reconnect_needed"] is False
-
-
-def test_reload_malformed_controls_keeps_prompts(project):
-    assert "refund_reply" in _prompt_names()
-    (project / "controls.yaml").write_text("commands:\n\t- bad\n")
-    report = server.reload()
-    assert "error" in report
-    assert "refund_reply" in _prompt_names()
 
 
 def test_reload_new_command_file(project):
@@ -136,7 +112,7 @@ def test_format_reload_report_version_drift():
 
 
 def test_format_reload_report_error():
-    lines = cli.format_reload_report({"error": "controls.yaml is broken",
+    lines = cli.format_reload_report({"error": "reload failed",
                                       "version": __version__})
     text = "\n".join(lines)
-    assert "controls.yaml is broken" in text
+    assert "reload failed" in text

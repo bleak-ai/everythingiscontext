@@ -40,10 +40,8 @@ def build(root: Path) -> list[dict]:
     ledger.append({"id": "G4", "label": "list_dir() / grep()", "detail": "tree navigation and search, matches only", "status": "on demand"})
     ledger.append({"id": "G5", "label": "run_script() / run_adhoc_script() output", "detail": "secret values scrubbed", "status": "on demand"})
     n_commands = len(commands_mod.discover(root))
-    n_disabled = len(commands_mod.disabled_commands())
-    disabled_note = f", {n_disabled} disabled" if n_disabled else ""
     builtin = [p.stem for p in commands_mod.discover_framework_prompts()]
-    ledger.append({"id": "G6", "label": "commands", "detail": f"{len(builtin)} built-in ({', '.join(builtin)}) + {n_commands} project command(s){disabled_note} as MCP prompts; a command's text enters context only when the user invokes it", "status": "on demand"})
+    ledger.append({"id": "G6", "label": "commands", "detail": f"{len(builtin)} built-in ({', '.join(builtin)}) + {n_commands} project command(s) as MCP prompts; a command's text enters context only when the user invokes it", "status": "on demand"})
     n_resources = len(fs.walk_files(root))
     ledger.append({"id": "G7", "label": "resources", "detail": f"{n_resources} state files as MCP resources (gcontext://<path>); one enters context only when attached", "status": "on demand"})
 

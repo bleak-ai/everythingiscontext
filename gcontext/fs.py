@@ -13,7 +13,7 @@ from pathlib import Path
 
 # Machine folders are skipped by list_dir and grep.
 SKIP_DIRS = {".venv", ".git", "__pycache__", "node_modules"}
-SKIP_FILES = {".installed", ".template.yaml", ".venv-sync.lock", ".controls.lock"}
+SKIP_FILES = {".installed", ".template.yaml", ".venv-sync.lock"}
 BROWSER_BLOCKED = SKIP_DIRS
 
 GREP_MAX_MATCHES = 100
