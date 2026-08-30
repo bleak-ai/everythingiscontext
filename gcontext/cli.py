@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import socket
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -501,6 +502,140 @@ def cmd_context(args):
     print_ledger(project_dir)
 
 
+def find_context_project_dir(path: str | None) -> Path:
+    project_dir = Path(path).resolve() if path else Path.cwd().resolve()
+    if (project_dir / "context").is_dir():
+        return project_dir
+    print(f"Error: no context/ folder found in {project_dir}.", file=sys.stderr)
+    print("You must set up the context standard first, then run this command again.", file=sys.stderr)
+    sys.exit(1)
+
+
+def parse_package_manifest(content: str) -> dict:
+    manifest = {}
+    current_list = None
+    for raw_line in content.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not raw_line[0].isspace() and ":" in raw_line:
+            key, _, value = raw_line.partition(":")
+            key = key.strip()
+            value = value.strip()
+            if value == "[]":
+                manifest[key] = []
+            elif value:
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                    value = value[1:-1]
+                manifest[key] = value
+            else:
+                manifest[key] = []
+            current_list = key
+        elif current_list and raw_line.startswith("  - "):
+            value = raw_line[4:].strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            manifest[current_list].append(value)
+    return manifest
+
+
+def update_package_dependencies(pyproject_path: Path, deps: list[str]) -> None:
+    content = pyproject_path.read_text()
+    section_match = re.search(
+        r"(?ms)^\[project\.optional-dependencies\]\s*\n(.*?)(?=^\[|\Z)",
+        content,
+    )
+    existing = []
+    if section_match:
+        packages_match = re.search(
+            r"(?ms)^packages\s*=\s*\[(.*?)\]",
+            section_match.group(1),
+        )
+        if packages_match:
+            existing = re.findall(r"[\"']([^\"']+)[\"']", packages_match.group(1))
+
+    merged = list(dict.fromkeys(existing + deps))
+    packages_line = "packages = [" + ", ".join(json.dumps(dep) for dep in merged) + "]"
+
+    if not section_match:
+        separator = "" if not content or content.endswith("\n\n") else "\n"
+        content += f"{separator}[project.optional-dependencies]\n{packages_line}\n"
+    else:
+        section = section_match.group(0)
+        packages_match = re.search(r"(?ms)^packages\s*=\s*\[.*?\]", section)
+        if packages_match:
+            updated_section = section[:packages_match.start()] + packages_line + section[packages_match.end():]
+        else:
+            updated_section = section.rstrip() + f"\n{packages_line}\n"
+        content = content[:section_match.start()] + updated_section + content[section_match.end():]
+
+    pyproject_path.write_text(content)
+
+
+def cmd_install(args):
+    project_dir = find_context_project_dir(args.project)
+    source = Path(args.source).expanduser().resolve()
+    if not source.is_dir():
+        print(f"Error: package source is not a local folder: {source}", file=sys.stderr)
+        sys.exit(1)
+
+    source_manifest = source / "package.yaml"
+    if not source_manifest.is_file():
+        print(f"Error: package.yaml not found in {source}.", file=sys.stderr)
+        sys.exit(1)
+
+    packages_dir = project_dir / "context" / "packages"
+    packages_dir.mkdir(parents=True, exist_ok=True)
+    installed_dir = packages_dir / source.name
+    if installed_dir.exists():
+        print(f"Error: package '{source.name}' is already installed at {installed_dir}.", file=sys.stderr)
+        sys.exit(1)
+    shutil.copytree(source, installed_dir)
+
+    manifest = parse_package_manifest((installed_dir / "package.yaml").read_text())
+    required_secrets = manifest.get("secrets") or []
+    env_path = project_dir / "secrets.env"
+    available_secrets = secrets_mod.parse_dotenv(env_path.read_text() if env_path.exists() else "")
+    missing_secrets = [name for name in required_secrets if name not in available_secrets]
+    if missing_secrets and not args.skip_secrets:
+        print("Error: missing required secrets:", file=sys.stderr)
+        for name in missing_secrets:
+            print(f"  {name}", file=sys.stderr)
+        print("Add these entries to secrets.env, then run the command again.", file=sys.stderr)
+        sys.exit(1)
+
+    deps = manifest.get("deps") or []
+    if deps:
+        pyproject_path = project_dir / "pyproject.toml"
+        if pyproject_path.exists():
+            update_package_dependencies(pyproject_path, deps)
+            subprocess.run(["uv", "sync"], cwd=project_dir, check=True)
+            deps_status = f"installed {len(deps)} dependency entry or entries"
+        else:
+            deps_status = "skipped because pyproject.toml does not exist"
+    else:
+        deps_status = "no dependencies required"
+
+    template = installed_dir / "config.yaml.template"
+    if template.exists():
+        local_dir = project_dir / "local"
+        local_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(template, local_dir / "config.yaml")
+        print("Config: created local/config.yaml. Fill in all REQUIRED fields.")
+
+    file_count = sum(1 for item in installed_dir.rglob("*") if item.is_file())
+    if missing_secrets:
+        secrets_status = "skipped missing secret check: " + ", ".join(missing_secrets)
+    elif required_secrets:
+        secrets_status = "all required secrets are present"
+    else:
+        secrets_status = "no secrets required"
+    print(f"Package: {source.name}")
+    print(f"Files installed: {file_count}")
+    print(f"Secrets: {secrets_status}")
+    print(f"Dependencies: {deps_status}")
+
+
 def cmd_statusline(args):
     project_dir = find_project_dir(args.project)
     port = resolve_port(args, project_dir)
@@ -546,6 +681,11 @@ def main():
     context_parser = subparsers.add_parser("context", help="Show the context ledger: every pipe into the agent, per mode")
     add_common(context_parser)
 
+    install_parser = subparsers.add_parser("install", help="Install a local package into context/packages/")
+    install_parser.add_argument("source", help="Path to a local package folder")
+    install_parser.add_argument("--project", help="Project root that contains context/")
+    install_parser.add_argument("--skip-secrets", action="store_true", help="Install even if required secrets are missing")
+
     statusline_parser = subparsers.add_parser("statusline", help="One-line server state for Claude Code statusline or claude-hud")
     add_common(statusline_parser)
     statusline_parser.add_argument("--color", action="store_true", help="Enable ANSI color codes in output")
@@ -559,6 +699,7 @@ def main():
         "reload": cmd_reload,
         "connect": cmd_connect,
         "context": cmd_context,
+        "install": cmd_install,
         "statusline": cmd_statusline,
     }
     if args.command in commands:

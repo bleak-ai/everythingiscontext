@@ -7,22 +7,25 @@ env vars at run time. Anything returned to the agent goes through scrub().
 from pathlib import Path
 
 
+def parse_dotenv(content: str) -> dict[str, str]:
+    pairs = {}
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        pairs[key.strip()] = value
+    return pairs
+
+
 def load(root: Path) -> dict[str, str]:
     env_file = root / "secrets.env"
     if not env_file.exists():
         return {}
-    pairs = {}
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" in line:
-            key, _, value = line.partition("=")
-            value = value.strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                value = value[1:-1]
-            pairs[key.strip()] = value
-    return pairs
+    return parse_dotenv(env_file.read_text())
 
 
 def scrub(text: str, secrets: dict[str, str]) -> str:
