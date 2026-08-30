@@ -1,8 +1,7 @@
 """Script execution: saved scripts by path (run_script) and ad-hoc agent
 code (run_adhoc_script), in the project venv.
 
-The venv lives at <project>/.venv and syncs the deps declared across all
-connection.yaml files on every run (uv makes the satisfied case near-instant).
+The venv lives at <project>/.venv.
 Secrets are injected as env vars and scrubbed from the output. Both paths
 share _run, so cwd, env, timeout, capping and scrubbing behave identically.
 Results are structured dicts (stdout, stderr, exit_code, timed_out,
@@ -20,7 +19,6 @@ import time
 from pathlib import Path
 
 from . import secrets as secrets_mod
-from . import state
 
 SCRIPT_TIMEOUT = 60
 MAX_TIMEOUT = 600
@@ -36,13 +34,6 @@ def venv_python(root: Path) -> Path:
     if sys.platform == "win32":
         return venv / "Scripts" / "python.exe"
     return venv / "bin" / "python"
-
-
-def collect_deps(root: Path) -> set[str]:
-    all_deps = set()
-    for conn in state.load_connections(root).values():
-        all_deps.update(conn.deps)
-    return all_deps
 
 
 class VenvSyncBusy(Exception):
@@ -86,12 +77,8 @@ def deps_marker(root: Path) -> Path:
 
 
 def ensure_venv(root: Path) -> None:
-    """Create the project venv if missing and sync connection deps into it.
-
-    A marker file inside the venv caches the last synced dep set. When the
-    marker matches the declared deps, no uv command runs.
-    """
-    wanted = "\n".join(sorted(collect_deps(root)))
+    """Create the project venv if it is missing."""
+    wanted = ""
     marker = deps_marker(root)
     if venv_dir(root).is_dir() and marker.exists() and marker.read_text() == wanted:
         return
@@ -101,13 +88,6 @@ def ensure_venv(root: Path) -> None:
         if not venv_dir(root).is_dir():
             subprocess.run(
                 ["uv", "venv", str(venv_dir(root)), "--quiet"],
-                check=True,
-                cwd=str(root),
-            )
-        if wanted:
-            subprocess.run(
-                ["uv", "pip", "install", "--quiet", "--python", str(venv_python(root))]
-                + wanted.split("\n"),
                 check=True,
                 cwd=str(root),
             )
@@ -129,13 +109,10 @@ def missing_module_hint(root: Path, stderr: str) -> str | None:
     if not match:
         return None
     module = match.group(1).split(".")[0]
-    declared = sorted(collect_deps(root))
-    declared_line = f" Currently declared: {', '.join(declared)}." if declared else ""
     return (
-        f"Package '{module}' is not installed in the project venv. Declare it "
-        f"under deps: in the relevant connection.yaml (ask the user, that file "
-        f"is human-edited), then rerun: the venv syncs on the next call."
-        f"{declared_line} Note the pip name can differ from the import name."
+        f"Package '{module}' is not installed in the project environment. "
+        "Add it to the project dependencies, then sync the environment. "
+        "The package name can differ from the import name."
     )
 
 

@@ -11,14 +11,7 @@ from gcontext import exec as exec_mod
 
 @pytest.fixture
 def root(tmp_path):
-    (tmp_path / "gcontext.yaml").write_text("name: test-agent\n")
     return tmp_path
-
-
-def _declare_dep(root, dep):
-    conn = root / "connections" / "svc"
-    conn.mkdir(parents=True, exist_ok=True)
-    (conn / "connection.yaml").write_text(f"name: svc\ndeps: [{dep}]\n")
 
 
 # --- Dep marker cache ---
@@ -36,36 +29,6 @@ def test_second_ensure_venv_runs_no_uv(root, monkeypatch):
     )
     exec_mod.ensure_venv(root)
     assert calls == []
-
-
-def test_dep_change_triggers_resync(root, monkeypatch):
-    exec_mod.ensure_venv(root)
-    _declare_dep(root, "httpx")
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0)
-
-    monkeypatch.setattr(exec_mod.subprocess, "run", fake_run)
-    exec_mod.ensure_venv(root)
-    assert len(calls) == 1
-    assert "install" in calls[0]
-    assert "httpx" in calls[0]
-    assert exec_mod.deps_marker(root).read_text() == "httpx"
-
-
-def test_failed_sync_keeps_old_marker(root, monkeypatch):
-    exec_mod.ensure_venv(root)
-    _declare_dep(root, "httpx")
-
-    def failing_run(cmd, **kwargs):
-        raise subprocess.CalledProcessError(1, cmd)
-
-    monkeypatch.setattr(exec_mod.subprocess, "run", failing_run)
-    with pytest.raises(subprocess.CalledProcessError):
-        exec_mod.ensure_venv(root)
-    assert exec_mod.deps_marker(root).read_text() == ""
 
 
 # --- Sync lock ---

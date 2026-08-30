@@ -24,7 +24,6 @@ def _reset_commands():
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
-    (tmp_path / "gcontext.yaml").write_text("name: t\n")
     (tmp_path / "agent.md").write_text("# Agent\n\noriginal instructions\n")
     cmd = tmp_path / "modules" / "support" / "commands" / "refund_reply.md"
     cmd.parent.mkdir(parents=True)

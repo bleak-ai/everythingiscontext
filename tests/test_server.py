@@ -6,7 +6,6 @@ from gcontext.secrets import load, scrub
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
-    (tmp_path / "gcontext.yaml").write_text("name: t\n")
     monkeypatch.setattr(server, "PROJECT_DIR", tmp_path)
     return tmp_path
 
@@ -31,7 +30,7 @@ def test_load_strips_surrounding_quotes(tmp_path):
 
 
 def test_read_file_blocks_traversal(project):
-    assert "outside the project" in server.read_file("../gcontext.yaml")
+    assert "outside the project" in server.read_file("../outside.md")
     assert "outside the project" in server.read_file("/etc/hosts")
 
 
@@ -272,15 +271,11 @@ def test_run_script_rejects_bad_paths(project):
 
 
 def test_run_adhoc_script_missing_module_hint(project):
-    (project / "connections" / "c").mkdir(parents=True)
-    (project / "connections" / "c" / "connection.yaml").write_text(
-        "name: c\ndeps: [pyyaml]\n"
-    )
     out = server.run_adhoc_script(code="import definitely_not_a_module")
     assert not out.startswith("[exit 0 | ")
     assert "[hint]" in out
     assert "definitely_not_a_module" in out
-    assert "connection.yaml" in out
+    assert "project dependencies" in out
 
 
 def test_run_adhoc_script_scrubs_secrets(project):

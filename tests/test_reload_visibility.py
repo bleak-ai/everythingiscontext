@@ -9,7 +9,6 @@ from gcontext import server
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
-    (tmp_path / "gcontext.yaml").write_text("name: test-agent\n")
     (tmp_path / "agent.md").write_text("# Test agent\n")
     monkeypatch.setattr(server, "PROJECT_DIR", tmp_path)
     monkeypatch.setattr(server, "BOOT_PROMPTS", set())

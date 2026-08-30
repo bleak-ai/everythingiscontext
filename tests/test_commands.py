@@ -40,7 +40,6 @@ def _reset_commands():
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
-    (tmp_path / "gcontext.yaml").write_text("name: t\n")
     monkeypatch.setattr(server, "PROJECT_DIR", tmp_path)
     return tmp_path
 

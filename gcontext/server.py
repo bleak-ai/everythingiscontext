@@ -252,8 +252,7 @@ class ConnectionTracker(Middleware):
         stays readable via the read_file tool."""
         await call_next(context)
         entries: list[tuple[str, Resource]] = []
-        config = state.load_gcontext_yaml(PROJECT_DIR)
-        agent_name = config.get("name", PROJECT_DIR.name)
+        agent_name = PROJECT_DIR.name
         entries.append(("root", Resource(
             uri=f"agent://{agent_name}",
             name=agent_name,
@@ -320,9 +319,8 @@ mcp.add_middleware(ConnectionTracker())
 
 @mcp.custom_route("/status", methods=["GET"])
 async def status_route(request: Request) -> JSONResponse:
-    config = state.load_gcontext_yaml(PROJECT_DIR)
     return JSONResponse({
-        "name": config.get("name", PROJECT_DIR.name),
+        "name": PROJECT_DIR.name,
         "project_dir": str(PROJECT_DIR.resolve()),
         "sessions": list(SESSIONS.values()),
         "stale": check_staleness(force=True),
@@ -466,8 +464,7 @@ def _resolve_resource_uri(uri: str) -> str | None:
 
 def _ask_resource() -> str:
     """Build the 'ask' resource: agent.md plus a map of modules, connections, and agents."""
-    config = state.load_gcontext_yaml(PROJECT_DIR)
-    agent_name = config.get("name", PROJECT_DIR.name)
+    agent_name = PROJECT_DIR.name
     parts = [f"# {agent_name}\n"]
     agent_md = PROJECT_DIR / "agent.md"
     if agent_md.exists():

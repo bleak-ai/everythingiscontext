@@ -341,36 +341,6 @@ def _strip_base_path(content: str) -> str:
     return _BASE_PATH_RE.sub("", content)
 
 
-def scaffold_connections(project_dir: Path, meta: dict) -> list[dict]:
-    """Report which declared connection kinds exist and which are missing.
-
-    Returns one report dict per entry:
-    {"kind": ..., "status": "exists" | "missing", "path": ...}.
-    """
-    from . import state
-
-    declared = meta.get("connections") or []
-    if not declared:
-        return []
-
-    existing_kinds = {
-        c.kind for c in state.load_connections(project_dir).values() if c.kind
-    }
-    report = []
-    for entry in declared:
-        kind = entry["kind"]
-        conn_dir = project_dir / "connections" / kind
-        if kind in existing_kinds or conn_dir.exists():
-            report.append(
-                {"kind": kind, "status": "exists", "path": f"connections/{kind}"}
-            )
-        else:
-            report.append(
-                {"kind": kind, "status": "missing", "path": f"connections/{kind}"}
-            )
-    return report
-
-
 def install_agent(project_dir: Path, source: str) -> dict:
     is_registry_install = not ("://" in source or source.startswith("github.com/"))
     if is_registry_install:
@@ -438,10 +408,6 @@ def install_agent(project_dir: Path, source: str) -> dict:
             share_dir = project_dir / share["path"]
             share_dir.mkdir(parents=True, exist_ok=True)
 
-    connections_report = []
-    for m, fl, r, required_by in to_write:
-        connections_report.extend(scaffold_connections(project_dir, m))
-
     if is_registry_install and (
         os.environ.get("GCONTEXT_API") or registry_spec() == DEFAULT_REGISTRY
     ):
@@ -450,7 +416,6 @@ def install_agent(project_dir: Path, source: str) -> dict:
     return {
         "id": meta["id"], "name": meta["name"], "count": len(files),
         "path": f"agents/{meta['id']}", "dependencies": dependencies,
-        "connections": connections_report,
     }
 
 

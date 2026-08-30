@@ -29,14 +29,6 @@ learns: Recipes per action and the quirks of your sites.
 Objective paragraph.
 """
 
-CONNECTION_YAML = """name: chrome-cdp
-description: Chrome over CDP
-kind: browser
-secrets: []
-deps: []
-"""
-
-
 def _write_agent(root, index_md=INDEX_MD, name="browser-recipes"):
     module = root / "agents" / name
     module.mkdir(parents=True)
@@ -44,10 +36,9 @@ def _write_agent(root, index_md=INDEX_MD, name="browser-recipes"):
     return module
 
 
-def _write_connection(root, yaml_text=CONNECTION_YAML, name="chrome-cdp"):
+def _write_connection(root, name="browser"):
     conn = root / "connections" / name
     conn.mkdir(parents=True)
-    (conn / "connection.yaml").write_text(yaml_text)
     return conn
 
 

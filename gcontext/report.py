@@ -2,7 +2,7 @@
 
 build_setup_report scans agents/ for agents (entries whose index.md
 frontmatter declares a `connections:` list), matches each declared kind
-against the connection.yaml files under connections/, and renders the text
+against folder names under connections/, and renders the text
 the setup prompt shows verbatim. build_explain_report renders the explain
 prompt's report the same way: the agent list without an agent id, the
 per-agent Does / Connects / Learns / Flow block with one. Code owns these
@@ -28,8 +28,8 @@ _WRAP_WIDTH = 62
 
 
 def _available_kinds(project_dir: Path) -> set[str]:
-    """Kinds carried by the connection.yaml files under connections/."""
-    return {c.kind for c in state.load_connections(project_dir).values() if c.kind}
+    """Connection folder names under connections/."""
+    return set(state.load_connections(project_dir))
 
 
 def _agents(project_dir: Path) -> list[tuple[str, dict, list, Path]]:

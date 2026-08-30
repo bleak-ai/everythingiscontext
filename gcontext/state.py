@@ -8,18 +8,11 @@ from pathlib import Path
 
 import yaml
 
-from .models import ConnectionManifest, ModuleManifest
+from .models import ModuleManifest
 
 
-def load_gcontext_yaml(root: Path) -> dict:
-    p = root / "gcontext.yaml"
-    if p.exists():
-        return yaml.safe_load(p.read_text()) or {}
-    return {}
-
-
-def load_connections(root: Path) -> dict[str, ConnectionManifest]:
-    """Scan connections/ for subdirectories containing connection.yaml."""
+def load_connections(root: Path) -> dict[str, ModuleManifest]:
+    """Scan connections/ for subdirectories."""
     conns_dir = root / "connections"
     if not conns_dir.is_dir():
         return {}
@@ -27,23 +20,18 @@ def load_connections(root: Path) -> dict[str, ConnectionManifest]:
     for item in sorted(conns_dir.iterdir()):
         if not item.is_dir():
             continue
-        conn_file = item / "connection.yaml"
-        if not conn_file.exists():
-            continue
-        data = yaml.safe_load(conn_file.read_text()) or {}
-        manifest = ConnectionManifest(**data)
-        result[manifest.name] = manifest
+        result[item.name] = ModuleManifest(name=item.name, description="")
     return result
 
 
 def connection_files(root: Path, name: str) -> list[str]:
-    """List non-yaml files in a connection folder."""
+    """List files in a connection folder."""
     conn_dir = root / "connections" / name
     if not conn_dir.is_dir():
         return []
     files = []
     for f in sorted(conn_dir.rglob("*")):
-        if f.is_file() and f.name != "connection.yaml":
+        if f.is_file() and f.name != ".gitkeep":
             files.append(str(f.relative_to(root)))
     return files
 

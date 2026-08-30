@@ -24,14 +24,6 @@ connections:
 Objective paragraph.
 """
 
-CONNECTION_YAML = """name: chrome-cdp
-description: Chrome over CDP
-kind: browser
-secrets: []
-deps: []
-"""
-
-
 def _write_agent(root, index_md=INDEX_MD, name="browser-recipes"):
     module = root / "agents" / name
     module.mkdir(parents=True)
@@ -39,10 +31,9 @@ def _write_agent(root, index_md=INDEX_MD, name="browser-recipes"):
     return module
 
 
-def _write_connection(root, yaml_text=CONNECTION_YAML, name="chrome-cdp"):
+def _write_connection(root, name="browser"):
     conn = root / "connections" / name
     conn.mkdir(parents=True)
-    (conn / "connection.yaml").write_text(yaml_text)
     return conn
 
 
@@ -139,14 +130,6 @@ def test_report_ready_when_kind_matches(tmp_path):
     report = build_setup_report(tmp_path)
     assert f"  browser        {S.CONNECTION_OK}" in report
     assert f"{S.STATUS_LABEL} {S.STATUS_READY}" in report
-
-
-def test_report_connection_yaml_without_kind_does_not_match(tmp_path):
-    _write_agent(tmp_path)
-    _write_connection(tmp_path, yaml_text="name: chrome-cdp\ndescription: Chrome\n")
-    report = build_setup_report(tmp_path)
-    assert f"  browser        {S.CONNECTION_MISSING}" in report
-    assert f"{S.STATUS_LABEL} {S.STATUS_CONNECTION_MISSING}" in report
 
 
 def test_report_declared_connection_without_kind_is_missing(tmp_path):

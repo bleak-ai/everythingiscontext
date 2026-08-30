@@ -18,26 +18,15 @@ def test_init_scaffolds_agent(tmp_path):
 
     agent = tmp_path / "my-agent"
     for rel in [
-        "gcontext.yaml",
         "agent.md",
         "secrets.env",
         ".gitignore",
     ]:
         assert (agent / rel).is_file(), rel
+    assert not (agent / "gcontext.yaml").exists()
     assert (agent / "connections").is_dir()
     assert not any((agent / "connections").glob("*/connection.yaml"))
-    assert "name: my-agent" in (agent / "gcontext.yaml").read_text()
     assert "secrets.env" in (agent / ".gitignore").read_text()
-
-
-def test_init_generates_install_id(tmp_path):
-    import yaml
-    result = run_cli("init", "my-agent", cwd=tmp_path)
-    assert result.returncode == 0
-    config = yaml.safe_load((tmp_path / "my-agent" / "gcontext.yaml").read_text())
-    install_id = config.get("install_id")
-    assert install_id is not None
-    assert len(install_id) == 36
 
 
 def test_init_prints_telemetry_notice(tmp_path):
@@ -66,31 +55,6 @@ def test_scaffolded_agent_works_with_cli(tmp_path):
     assert result.returncode == 0, result.stderr
     assert "agent.md" in result.stdout
     assert "commands" in result.stdout
-
-
-def test_persist_port_replaces_commented_template_line(tmp_path):
-    from gcontext.cli import persist_port
-
-    yaml_file = tmp_path / "gcontext.yaml"
-    yaml_file.write_text("name: a\ndescription: d\n# port: 4242\n")
-    persist_port(tmp_path, 4243)
-    text = yaml_file.read_text()
-    assert "port: 4243\n" in text
-    assert "# port:" not in text
-    assert "name: a" in text
-
-
-def test_persist_port_updates_existing_and_appends_when_missing(tmp_path):
-    from gcontext.cli import persist_port
-
-    yaml_file = tmp_path / "gcontext.yaml"
-    yaml_file.write_text("name: a\nport: 4243\n")
-    persist_port(tmp_path, 5000)
-    assert yaml_file.read_text() == "name: a\nport: 5000\n"
-
-    yaml_file.write_text("name: a\n")
-    persist_port(tmp_path, 4244)
-    assert yaml_file.read_text() == "name: a\nport: 4244\n"
 
 
 def test_find_free_port_skips_taken_port():

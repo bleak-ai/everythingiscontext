@@ -17,7 +17,6 @@ from . import commands as commands_mod
 from . import exec as exec_mod
 from . import ledger as ledger_mod
 from . import registry as registry_mod
-from . import report_strings
 from .kinds import CONNECTION_KINDS
 from . import secrets as secrets_mod
 from . import server
@@ -52,13 +51,6 @@ def print_ledger(project_dir: Path):
         print(f"  {i}. [{pipe['id']}] {label} {color}{status}{RESET} {DIM}{pipe['detail']}{RESET}")
 
 
-INIT_GCONTEXT_YAML = """\
-name: {name}
-description: Describe what this agent is for.
-install_id: {install_id}
-# port: 4242
-"""
-
 INIT_INSTRUCTIONS = """\
 # Agent
 
@@ -70,7 +62,6 @@ modules, and agents).
 
 INIT_SECRETS = """\
 # Secret VALUES live here and never leave this machine (this file is gitignored).
-# Each connection's connection.yaml declares which NAMEs it needs.
 # EXAMPLE_API_KEY=...
 """
 
@@ -105,8 +96,7 @@ Three ideas cover the folder:
   retired state; installed agents live in `agents/` and bring their own
   commands.
 - Reach: `connections/` holds the services the agent can use; `secrets.env`
-  holds the secret values. It is gitignored and never leaves this machine,
-  so after cloning, recreate it from the NAMEs each connection.yaml declares.
+  holds the secret values. It is gitignored and never leaves this machine.
 - Steering: commands (slash commands in your client) and resources (state
   files you attach to a message).
 """
@@ -120,7 +110,6 @@ def cmd_init(args):
     name = target.name
     install_id = str(uuid.uuid4())
     files = {
-        "gcontext.yaml": INIT_GCONTEXT_YAML.format(name=name, install_id=install_id),
         "README.md": INIT_README.format(name=name),
         "agent.md": INIT_INSTRUCTIONS,
         "secrets.env": INIT_SECRETS,
@@ -157,11 +146,10 @@ def cmd_init(args):
 
 
 def find_project_dir(path: str | None) -> Path:
-    p = Path(path).resolve() if path else Path.cwd()
-    if (p / "gcontext.yaml").exists():
+    p = Path(path).resolve() if path else Path.cwd().resolve()
+    if p.is_dir():
         return p
-    print(f"Error: no gcontext.yaml found in {p}", file=sys.stderr)
-    print("Run from a gcontext project directory or pass the path as an argument.", file=sys.stderr)
+    print(f"Error: project folder does not exist: {p}", file=sys.stderr)
     sys.exit(1)
 
 
@@ -181,13 +169,7 @@ def resolve_port(args, project_dir: Path) -> int:
             return int(lockfile.read_text().strip())
         except (ValueError, OSError):
             pass
-    config = state.load_gcontext_yaml(project_dir)
-    raw = config.get("port", DEFAULT_PORT)
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        print(f"Error: port value '{raw}' in gcontext.yaml is not a valid number.", file=sys.stderr)
-        sys.exit(1)
+    return DEFAULT_PORT
 
 
 def write_port_lockfile(project_dir: Path, port: int) -> None:
@@ -220,23 +202,6 @@ def find_free_port(start: int, attempts: int = 50) -> int:
             return port
     print(f"Error: no free port found in {start}-{start + attempts - 1}.", file=sys.stderr)
     sys.exit(1)
-
-
-def persist_port(project_dir: Path, port: int):
-    """Write port: into gcontext.yaml, replacing an existing (or commented) port line."""
-    path = project_dir / "gcontext.yaml"
-    lines = path.read_text().splitlines() if path.exists() else []
-    out, replaced = [], False
-    for line in lines:
-        stripped = line.strip()
-        if not replaced and (stripped.startswith("port:") or stripped.startswith("# port:")):
-            out.append(f"port: {port}")
-            replaced = True
-        else:
-            out.append(line)
-    if not replaced:
-        out.append(f"port: {port}")
-    path.write_text("\n".join(out) + "\n")
 
 
 def fetch_status(port: int) -> dict | None:
@@ -320,27 +285,21 @@ def cmd_reload(args):
 def cmd_up(args):
     project_dir = find_project_dir(args.project)
     server.PROJECT_DIR = project_dir
-    config = state.load_gcontext_yaml(project_dir)
-    name = config.get("name", project_dir.name)
-    configured = config.get("port")
+    name = project_dir.name
     port = resolve_port(args, project_dir)
 
     if not port_is_free(port):
         running = fetch_status(port)
         who = f" ({running.get('name', '?')} serving {running.get('project_dir', '?')})" if running else ""
-        if getattr(args, "port", None) or configured:
-            source = "--port" if getattr(args, "port", None) else "gcontext.yaml"
-            print(f"Error: port {port} (from {source}) is already in use{who}.", file=sys.stderr)
+        if getattr(args, "port", None):
+            print(f"Error: port {port} (from --port) is already in use{who}.", file=sys.stderr)
             print("Free it, or pick another port with --port.", file=sys.stderr)
             sys.exit(1)
         chosen = find_free_port(port + 1)
         print(f"{YELLOW}{BOLD}Port {port} is taken{who}.{RESET}")
-        print(f"{YELLOW}{BOLD}Using port {chosen} instead. Saved port: {chosen} to gcontext.yaml so this URL stays stable.{RESET}")
+        print(f"{YELLOW}{BOLD}Using port {chosen} instead.{RESET}")
         print()
         port = chosen
-
-    if port != int(configured or DEFAULT_PORT):
-        persist_port(project_dir, port)
 
     url = server_url(port)
 
@@ -405,18 +364,13 @@ def cmd_up(args):
 def cmd_status(args):
     project_dir = find_project_dir(args.project)
 
-    config = state.load_gcontext_yaml(project_dir)
     connections = state.load_connections(project_dir)
-    secrets = secrets_mod.load(project_dir)
     modules = state.discover_modules(project_dir)
     agents = state.discover_agents(project_dir)
     port = resolve_port(args, project_dir)
 
-    name = config.get("name", project_dir.name)
-    desc = config.get("description", "")
+    name = project_dir.name
     print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} status of {name}")
-    if desc:
-        print(f"{DIM}{desc}{RESET}")
     print(f"{DIM}State: {project_dir}{RESET}")
     print()
 
@@ -451,13 +405,8 @@ def cmd_status(args):
     print("Connections:")
     if not connections:
         print(f"  {DIM}none defined{RESET}")
-    for cname, conn in connections.items():
-        missing = [s for s in conn.secrets if s not in secrets or not secrets[s]]
-        if missing:
-            print(f"  {cname}: {YELLOW}missing {', '.join(missing)}{RESET}")
-        else:
-            filled = len(conn.secrets)
-            print(f"  {cname}: {GREEN}ready{RESET} {DIM}({filled}/{filled} secrets){RESET}")
+    for cname in connections:
+        print(f"  {cname}")
     print()
 
     if modules:
@@ -487,8 +436,7 @@ def cmd_status(args):
 
 def cmd_connect(args):
     project_dir = find_project_dir(args.project)
-    config = state.load_gcontext_yaml(project_dir)
-    name = config.get("name", project_dir.name)
+    name = project_dir.name
     port = resolve_port(args, project_dir)
     url = server_url(port)
 
@@ -547,8 +495,7 @@ def cmd_connect(args):
 
 def cmd_context(args):
     project_dir = find_project_dir(args.project)
-    config = state.load_gcontext_yaml(project_dir)
-    name = config.get("name", project_dir.name)
+    name = project_dir.name
 
     print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {name}")
     print(f"{DIM}Every pipe that inserts context into an attached agent.{RESET}")
@@ -574,8 +521,7 @@ def cmd_add(args):
             print("  https://gcontext.ai/agents/", file=sys.stderr)
         sys.exit(1)
 
-    config = state.load_gcontext_yaml(project_dir)
-    server_name = config.get("name", project_dir.name)
+    server_name = project_dir.name
     rel = result["path"]
     print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} installed {result['name']} ({result['count']} files) at {rel}/")
     for dep in result.get("dependencies", []):
@@ -583,12 +529,6 @@ def cmd_add(args):
             f"{BOLD}gcontext{RESET} {DIM}-{RESET} installed {dep['name']} "
             f"({dep['count']} files) at {dep['path']}/ (required by {dep['required_by']})"
         )
-    for conn in result.get("connections", []):
-        if conn["status"] == "missing":
-            line = report_strings.CONNECTION_MISSING_LINE.format(kind=conn["kind"])
-        else:
-            line = report_strings.CONNECTION_EXISTS_LINE.format(kind=conn["kind"])
-        print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {line}")
     up_dir = args.project or "."
     print()
     print("Next steps:")
@@ -961,7 +901,7 @@ def main():
 
     def add_common(p):
         p.add_argument("project", nargs="?", help="Path to gcontext project directory")
-        p.add_argument("--port", type=int, help=f"Server port (default: {DEFAULT_PORT}, or port: in gcontext.yaml)")
+        p.add_argument("--port", type=int, help=f"Server port (default: {DEFAULT_PORT})")
 
     up_parser = subparsers.add_parser("up", help="Start the server. Clients connect to its URL")
     add_common(up_parser)
