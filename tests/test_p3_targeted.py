@@ -1,66 +1,6 @@
-"""Targeted tests for parse_github_url and secrets.scrub edge cases."""
+"""Targeted tests for secrets.scrub edge cases."""
 
-import pytest
-
-from gcontext import registry
 from gcontext import secrets as secrets_mod
-
-
-# --- parse_github_url (item 70b) ---
-
-
-class TestParseGithubUrl:
-    def test_plain_repo(self):
-        owner_repo, ref, subpath = registry.parse_github_url(
-            "https://github.com/bleak-ai/agents"
-        )
-        assert owner_repo == "bleak-ai/agents"
-        assert ref == "main"
-        assert subpath == ""
-
-    def test_branch_ref(self):
-        owner_repo, ref, subpath = registry.parse_github_url(
-            "https://github.com/bleak-ai/agents/tree/develop"
-        )
-        assert owner_repo == "bleak-ai/agents"
-        assert ref == "develop"
-        assert subpath == ""
-
-    def test_tag_ref(self):
-        owner_repo, ref, subpath = registry.parse_github_url(
-            "https://github.com/bleak-ai/agents/tree/v1.2.3"
-        )
-        assert owner_repo == "bleak-ai/agents"
-        assert ref == "v1.2.3"
-        assert subpath == ""
-
-    def test_ref_with_subpath(self):
-        owner_repo, ref, subpath = registry.parse_github_url(
-            "https://github.com/bleak-ai/agents/tree/main/browser-recipes"
-        )
-        assert owner_repo == "bleak-ai/agents"
-        assert ref == "main"
-        assert subpath == "browser-recipes"
-
-    def test_deep_subpath(self):
-        owner_repo, ref, subpath = registry.parse_github_url(
-            "https://github.com/owner/repo/tree/main/a/b/c"
-        )
-        assert owner_repo == "owner/repo"
-        assert ref == "main"
-        assert subpath == "a/b/c"
-
-    def test_bare_github_prefix(self):
-        owner_repo, ref, subpath = registry.parse_github_url(
-            "github.com/bleak-ai/agents"
-        )
-        assert owner_repo == "bleak-ai/agents"
-        assert ref == "main"
-        assert subpath == ""
-
-    def test_invalid_url_raises(self):
-        with pytest.raises(registry.RegistryError):
-            registry.parse_github_url("https://github.com/only-owner")
 
 
 # --- secrets.scrub edge cases (item 70c) ---

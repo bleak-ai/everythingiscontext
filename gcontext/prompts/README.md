@@ -23,9 +23,6 @@ as markdown, not in Python strings.
   walks the flow. Without an agent id it shows the agent list.
 - `ask.md`: the built-in `ask` prompt. Loads the agent's context and
   answers a question using its state.
-- `agents.md`: the built-in `agents` prompt. Browse, install, and update
-  agents from the registry.
-
 The wording of the code-built reports (the setup report and the explain
 report) is not in this folder: it lives in `gcontext/report_strings.py`,
 strings only, imported by `report.py`, which owns the computation and the

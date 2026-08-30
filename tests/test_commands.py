@@ -118,7 +118,7 @@ def test_prompt_rejects_missing_required_argument(tmp_path):
 def test_commands_ledger_pipe(project):
     _write_commands(project)
     g6 = [p for p in ledger.build(project) if p["id"] == "G6"]
-    assert g6 and "4 built-in (agents, ask, explain, setup) + 2 project command(s)" in g6[0]["detail"]
+    assert g6 and "3 built-in (ask, explain, setup) + 2 project command(s)" in g6[0]["detail"]
 
 
 def test_file_command_hyphens_normalized(tmp_path):
@@ -430,7 +430,7 @@ def test_refresh_generated_ignores_unrelated_paths(tmp_path):
 
 def test_register_framework_prompts_setup():
     mcp = FastMCP("t")
-    assert commands.register_framework_prompts(mcp) == 4
+    assert commands.register_framework_prompts(mcp) == 3
 
     async def go():
         async with Client(mcp) as c:
@@ -518,5 +518,5 @@ def test_reregister_all_counts(tmp_path):
     commands.register_framework_prompts(mcp, tmp_path)
     commands.register_commands(mcp, tmp_path)
     report = commands.reregister_all(mcp, tmp_path)
-    assert report["framework"] == 4
+    assert report["framework"] == 3
     assert report["project"] == 2

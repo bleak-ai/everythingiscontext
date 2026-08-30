@@ -6,7 +6,7 @@ from datetime import datetime
 
 from fastmcp import Client, FastMCP
 
-from gcontext import commands, registry
+from gcontext import commands
 from gcontext import report_strings as S
 from gcontext.report import build_explain_report
 
@@ -46,6 +46,10 @@ def _today():
     return datetime.now().strftime("%Y-%m-%d")
 
 
+def _with_setup_pending(text):
+    return text.replace("\n---\n", "\nsetup: pending\n---\n", 1)
+
+
 # --- List mode ---
 
 
@@ -58,7 +62,7 @@ def test_explain_list_mode(tmp_path):
     second = INDEX_MD.replace("browser-recipes", "deploy-watch").replace(
         "kind: browser", "kind: deploy-target"
     )
-    _write_agent(tmp_path, index_md=registry.stamp_setup_pending(second), name="deploy-watch")
+    _write_agent(tmp_path, index_md=_with_setup_pending(second), name="deploy-watch")
     _write_connection(tmp_path)
     report = build_explain_report(tmp_path)
     assert report == (

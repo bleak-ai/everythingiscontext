@@ -1,6 +1,6 @@
 """The MCP surface: everything an attached agent can reach, in one file.
 
-Seven tools (defined below, their agent-facing text in prompts/tools/*.md),
+Six tools (defined below, their agent-facing text in prompts/tools/*.md),
 state files as MCP resources (gcontext://<path>, listed live), commands
 registered as prompts, a /status route, and session tracking.
 The actual work lives in the per-concern modules:
@@ -31,8 +31,6 @@ from . import __version__
 from . import commands as commands_mod
 from . import exec as exec_mod
 from . import fs
-from . import registry as registry_mod
-from . import report_strings
 from . import secrets as secrets_mod
 from . import state
 
@@ -576,10 +574,6 @@ def run_adhoc_script(
 
 
 
-def _register_agent_commands(agent_id: str):
-    commands_mod.register_agent_commands(mcp, PROJECT_DIR, agent_id)
-
-
 def _notify_prompts_changed():
     try:
         import asyncio
@@ -591,91 +585,3 @@ def _notify_prompts_changed():
             loop.create_task(session.send_prompt_list_changed())
     except Exception:
         pass
-
-
-@mcp.tool(description=_tool_doc("agent"), output_schema=None)
-def agent(action: str, id: str = "", query: str = "") -> str:
-    if action == "search":
-        try:
-            entries = registry_mod.search_catalog(query)
-        except (registry_mod.RegistryError, ValueError) as e:
-            return f"Error: {e}."
-        if not entries:
-            return f"No agents match '{query}'."
-        lines = []
-        for e in entries:
-            tags = ", ".join(e.get("tags", []))
-            lines.append(f"{e['id']}: {e['name']}")
-            if e.get("description"):
-                lines.append(f"  {e['description']}")
-            if tags:
-                lines.append(f"  tags: {tags}")
-            lines.append("")
-        lines.append('Install one with agent(action="install", id="<id>")')
-        return "\n".join(lines)
-
-    elif action == "install":
-        if not id:
-            return "Error: install needs an id."
-        try:
-            result = registry_mod.install_agent(PROJECT_DIR, id)
-        except (registry_mod.RegistryError, ValueError) as e:
-            return f"Error: {e}."
-        _register_agent_commands(result["id"])
-        for dep in result.get("dependencies", []):
-            _register_agent_commands(dep["id"])
-        _notify_prompts_changed()
-        snapshot_startup_files()
-        lines = [f"Installed {result['name']} ({result['count']} files) at {result['path']}/."]
-        for dep in result.get("dependencies", []):
-            lines.append(report_strings.INSTALLED_DEPENDENCY_LINE.format(**dep))
-        for conn in result.get("connections", []):
-            if conn["status"] == "missing":
-                lines.append(
-                    report_strings.CONNECTION_MISSING_LINE.format(kind=conn["kind"])
-                )
-            else:
-                lines.append(
-                    report_strings.CONNECTION_EXISTS_LINE.format(kind=conn["kind"])
-                )
-        lines.append(f"Next step: run the setup in {result['path']}/commands/setup.md")
-        note = _self_reload(context=f"agent install {id}")
-        if note:
-            lines.append(note)
-        return "\n".join(lines)
-
-    elif action == "check":
-        try:
-            if id:
-                agent_dir = PROJECT_DIR / "agents" / id
-                legacy_dir = PROJECT_DIR / "modules" / id
-                if not agent_dir.is_dir() and not legacy_dir.is_dir():
-                    return f"Error: agents/{id} does not exist."
-                reports = [registry_mod.check_agent(PROJECT_DIR, id)]
-            else:
-                reports = registry_mod.check_all(PROJECT_DIR)
-        except (registry_mod.RegistryError, ValueError) as e:
-            return f"Error: {e}."
-        if not reports:
-            return f"No installed agents track a template (no {registry_mod.MANIFEST_NAME} files found)."
-        return "\n".join(registry_mod.format_check_report(r) for r in reports)
-
-    elif action == "update":
-        if not id:
-            return "Error: update needs an id."
-        try:
-            report = registry_mod.update_agent(PROJECT_DIR, id)
-        except (registry_mod.RegistryError, ValueError) as e:
-            return f"Error: {e}."
-        if report.get("commands_changed"):
-            _register_agent_commands(report["id"])
-            _notify_prompts_changed()
-            snapshot_startup_files()
-        result_text = registry_mod.format_update_report(report)
-        if report.get("commands_changed"):
-            note = _self_reload(context=f"agent update {id}")
-            if note:
-                result_text = f"{result_text}\n{note}"
-        return result_text
-
-    return f"Error: unknown action '{action}'. Use search, install, check, or update."

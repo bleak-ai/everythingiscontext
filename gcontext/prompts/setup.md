@@ -114,9 +114,6 @@ Build a module:
    not empty headings. Read it back to verify it parses and says what the
    user meant; that read-back is the module's smoke test.
 
-Install an agent: use the `agent` tool (search, install, check, update);
-it manages the agents/ folder itself, never write agents/ entries by hand.
-
 Nothing is done before its smoke test passes: a connection when the test
 call works, a module when its index.md reads back correctly.
 

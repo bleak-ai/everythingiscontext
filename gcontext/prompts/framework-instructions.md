@@ -4,8 +4,8 @@ The folder this server exposes is your state. Everything you know and learn
 lives there as plain files; the runtime you run in forgets between sessions,
 the folder does not.
 
-Your tools are read_file, write_file, list_dir, grep, run_script,
-run_adhoc_script, and agent. All paths are relative to the state folder; nothing
+Your tools are read_file, write_file, list_dir, grep, run_script, and
+run_adhoc_script. All paths are relative to the state folder; nothing
 outside it is reachable.
 Every state file is also an MCP resource at gcontext://<path>, so runtimes
 can attach one directly instead of calling read_file.
@@ -28,10 +28,8 @@ How the folder is organized (three top-level folders):
   provider", not "Stripe"); the agent finds the concrete service in
   connections/ at run time. Company-specific facts learned while working
   (playbooks, logs) are fine; hard-wired service names in the steps are not.
-- agents/<name>/: installed agents from the registry. The agent tool manages
-  this folder (search, install, check, update). Each agent has its own
-  index.md, commands/, and scripts/. Do not create agents/ entries by hand;
-  use the agent tool.
+- agents/<name>/: agent-specific state. Each agent can have its own index.md,
+  commands/, and scripts/.
 
 Dependency direction: agents may reference modules and connections, modules
 may reference connections. Never the reverse. A connection never depends on a

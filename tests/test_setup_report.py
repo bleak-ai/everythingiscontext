@@ -1,15 +1,11 @@
-"""Tests for the setup detection machinery: the `setup: pending` stamp on
-add, the connection kind matching, and the code-built Block 1 report."""
+"""Tests for the code-built setup report."""
 
 import asyncio
-import re
 
-import pytest
 from fastmcp import Client, FastMCP
 
-from gcontext import commands, registry
+from gcontext import commands
 from gcontext import report_strings as S
-from gcontext.kinds import CONNECTION_KINDS
 from gcontext.report import build_setup_report
 
 INDEX_MD = """---
@@ -37,50 +33,8 @@ def _write_connection(root, name="browser"):
     return conn
 
 
-# --- The stamp ---
-
-
-def test_stamp_inserts_line_and_preserves_the_rest():
-    stamped = registry.stamp_setup_pending(INDEX_MD)
-    assert "\nsetup: pending\n---\n" in stamped
-    assert stamped.replace("setup: pending\n", "", 1) == INDEX_MD
-
-
-def test_stamp_leaves_frontmatterless_content_alone():
-    assert registry.stamp_setup_pending("# No frontmatter\n") == "# No frontmatter\n"
-
-
-def test_add_stamps_setup_pending(tmp_path, monkeypatch):
-    files = [
-        {"path": "index.md", "content": INDEX_MD},
-        {"path": "steps/1-sync.md", "content": "# Step 1\n"},
-    ]
-    monkeypatch.setattr(registry, "fetch_agent_by_id", lambda _id: (files, "ref-1"))
-    monkeypatch.setattr(registry, "_ping_download", lambda _id: None)
-    registry.install_agent(tmp_path, "browser-recipes")
-
-    installed = (tmp_path / "agents" / "browser-recipes" / "index.md").read_text()
-    meta, _ = commands.parse_command(installed)
-    assert meta["setup"] == "pending"
-    # Everything except the added lines is byte for byte the registry copy.
-    cleaned = installed.replace("setup: pending\n", "", 1)
-    cleaned = re.sub(r"<!-- Base path: .+? -->\n", "", cleaned)
-    assert cleaned == INDEX_MD
-    # Untouched files stay identical.
-    assert (tmp_path / "agents" / "browser-recipes" / "steps" / "1-sync.md").read_text() == "# Step 1\n"
-    # The manifest hashes the unstamped content: removing the stamp
-    # restores a clean state against the registry copy.
-    manifest = registry.read_manifest(tmp_path / "agents" / "browser-recipes")
-    assert manifest["files"]["index.md"] == registry.file_hash(INDEX_MD)
-
-
-# --- The kind enum ---
-
-
-def test_connection_kinds_enum():
-    assert "browser" in CONNECTION_KINDS
-    assert "scheduler" in CONNECTION_KINDS
-    assert len(CONNECTION_KINDS) == 9
+def _with_setup_pending(text):
+    return text.replace("\n---\n", "\nsetup: pending\n---\n", 1)
 
 
 # --- The report ---
@@ -96,7 +50,7 @@ def test_report_module_without_connections_is_not_an_agent(tmp_path):
 
 
 def test_report_needs_setup(tmp_path):
-    _write_agent(tmp_path, index_md=registry.stamp_setup_pending(INDEX_MD))
+    _write_agent(tmp_path, index_md=_with_setup_pending(INDEX_MD))
     report = build_setup_report(tmp_path)
     assert report == (
         f"{S.HEADER}\n"
@@ -110,7 +64,7 @@ def test_report_needs_setup(tmp_path):
 
 
 def test_report_needs_setup_wins_over_satisfied_connections(tmp_path):
-    _write_agent(tmp_path, index_md=registry.stamp_setup_pending(INDEX_MD))
+    _write_agent(tmp_path, index_md=_with_setup_pending(INDEX_MD))
     _write_connection(tmp_path)
     report = build_setup_report(tmp_path)
     assert f"  browser        {S.CONNECTION_OK}" in report
@@ -159,7 +113,7 @@ def test_report_multiple_agents_share_one_header(tmp_path):
 
 
 def test_setup_prompt_injects_report(tmp_path):
-    _write_agent(tmp_path, index_md=registry.stamp_setup_pending(INDEX_MD))
+    _write_agent(tmp_path, index_md=_with_setup_pending(INDEX_MD))
     mcp = FastMCP("t")
     commands.register_framework_prompts(mcp, root=tmp_path)
 
