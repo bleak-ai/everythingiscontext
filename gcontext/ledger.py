@@ -32,7 +32,7 @@ def build(root: Path) -> list[dict]:
     else:
         ledger.append({"id": "G1", "label": "agent.md", "detail": "file missing, only the framework instructions pushed at connect", "status": "skipped"})
 
-    ledger.append({"id": "G2", "label": "tool descriptions", "detail": "7 gcontext tools, pushed at connect", "status": "loaded"})
+    ledger.append({"id": "G2", "label": "tool descriptions", "detail": "6 gcontext tools, pushed at connect", "status": "loaded"})
     g3_detail = f"{n_files} files in connections/ + modules/ + agents/"
     if state.archived(root):
         g3_detail += "; archive/ not scanned, readable by path"

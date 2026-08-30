@@ -5,7 +5,9 @@ import sys
 
 def run_cli(*args, cwd, env_extra=None):
     # Point telemetry at an unreachable local port so tests never hit the network.
-    env = {**os.environ, "GCONTEXT_API": "http://127.0.0.1:9", **(env_extra or {})}
+    env = dict(os.environ)
+    env.pop("GCONTEXT_TELEMETRY", None)
+    env.update({"GCONTEXT_API": "http://127.0.0.1:9", **(env_extra or {})})
     return subprocess.run(
         [sys.executable, "-m", "gcontext.cli", *args],
         capture_output=True, text=True, cwd=cwd, env=env,

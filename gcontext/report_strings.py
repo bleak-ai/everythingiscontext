@@ -22,17 +22,6 @@ STATUS_NEEDS_SETUP = "needs setup"
 STATUS_CONNECTION_MISSING = "connection missing"
 STATUS_READY = "ready"
 
-# Install report (agent tool and `gcontext add`)
-INSTALLED_DEPENDENCY_LINE = "Installed {name} ({count} files) at {path}/ (required by {required_by})."
-CONNECTION_STUB_CREATED_LINE = (
-    "Created connection stub connections/{kind}/ (declared by the module). "
-    "Setup fills it in."
-)
-CONNECTION_MISSING_LINE = (
-    "Connection {kind} is missing. The agent needs it; set one up manually."
-)
-CONNECTION_EXISTS_LINE = "Connection {kind} already exists; the agent uses it."
-
 # Explain report
 DOES_LABEL = "Does"
 CONNECTS_LABEL = "Connects"

@@ -82,28 +82,25 @@ plainly. Nothing else. Run setup.md check and seed steps here.
 
 Build a connection:
 
-1. Decide the auth model and the secret NAMEs (e.g. SLACK_BOT_TOKEN) and
-   the Python deps. Prefer plain HTTPS via requests over heavy SDKs unless
-   the user wants the SDK. More than one auth model is a Block 3 question.
+1. Decide the auth model and the secret NAMEs (e.g. SLACK_BOT_TOKEN).
+   Prefer plain HTTPS over a heavy SDK unless the user wants the SDK.
+   More than one auth model is a Block 3 question.
 2. If a connection with that name exists, ask (Block 3 form): extend it or
    leave it. Never overwrite silently.
-3. Write connections/<service>/connection.yaml: name, description, kind
-   (from the fixed kind list, matching what the agent's index.md
-   declares), secrets (names), deps.
-4. Write connections/<service>/index.md: what the service is used for
+3. Write connections/<service>/index.md: what the service is used for
    here, base URL, auth style, the endpoints that matter, known quirks.
-5. Tell the user to add the secret VALUES to secrets.env in the agent
+4. Tell the user to add the secret VALUES to secrets.env in the agent
    folder, one NAME=value per line, and to say "done". Several
    connections: list all needed NAMEs at once. The server reads
    secrets.env live; no reload is needed for secrets. When a reload is
    ever needed, use exactly this wording: "Run `gcontext reload`, then
    reconnect in your client (`/mcp` in Claude Code) if it reports a
    reconnect is needed. If the server is stopped: `gcontext up`."
-6. Smoke test with run_adhoc_script: check each secret is present
+5. Smoke test with run_adhoc_script: check each secret is present
    (os.environ.get, print present or missing, never the value), then make
    one harmless authenticated call. On failure, read the error, fix, and
    retry. State the result in one plain line.
-7. Once the call works, save it under connections/<service>/scripts/ and
+6. Once the call works, save it under connections/<service>/scripts/ and
    record what the test taught you in the connection's index.md.
 
 Build a module:

@@ -32,3 +32,6 @@ packages = ["gcontext"]
 
 [tool.hatch.build.targets.sdist]
 only-include = ["gcontext", "tests", "README.md", "LICENSE"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

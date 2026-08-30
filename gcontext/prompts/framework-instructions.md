@@ -12,16 +12,10 @@ can attach one directly instead of calling read_file.
 
 How the folder is organized (three top-level folders):
 
-- connections/<service>/: a service you can reach. Its connection.yaml declares
-  the secret NAMEs and Python deps it needs; its index.md explains the API in
-  practice. connection.yaml fields: `name` (folder identity), `description`,
-  `kind` (a value from the fixed capability set enforced by the framework
-  and documented in the package's docs/setup-script.md; for example
-  ticket-tracker or browser),
-  `secrets` (list of secret NAMEs, values live in secrets.env), and `deps`
-  (list of pip package names installed into the project venv).
-  Read the index.md before writing a script against a service, and
-  update it when you learn something worth keeping.
+- connections/<service>/: a service you can reach. The folder name is its
+  identity. Its index.md explains the API, auth method, and known details.
+  Secret values live in secrets.env. Read the index.md before you write a
+  script for a service. Update it when you learn useful information.
 - modules/<name>/: accumulated knowledge on a topic, entry point index.md.
   Modules are portable: another agent can use one by copying the folder. So
   keep a module connection-agnostic in its process files (say "the payment

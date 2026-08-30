@@ -29,7 +29,10 @@ def test_ping_install_sends_payload():
     t.start()
 
     # the suite runs from the dev checkout, which the dev-install guard mutes
-    with patch.dict("os.environ", {"GCONTEXT_API": f"http://127.0.0.1:{port}"}), \
+    with patch.dict("os.environ", {
+        "GCONTEXT_API": f"http://127.0.0.1:{port}",
+        "GCONTEXT_TELEMETRY": "1",
+    }), \
          patch("gcontext.telemetry._is_dev_install", return_value=False):
         ping_install("test-uuid-123", "0.5.0")
 
@@ -45,7 +48,10 @@ def test_ping_install_sends_payload():
 
 
 def test_ping_install_silently_fails_on_network_error():
-    with patch.dict("os.environ", {"GCONTEXT_API": "http://127.0.0.1:1"}):
+    with patch.dict("os.environ", {
+        "GCONTEXT_API": "http://127.0.0.1:1",
+        "GCONTEXT_TELEMETRY": "1",
+    }):
         ping_install("x", "0.0.0")
 
 
