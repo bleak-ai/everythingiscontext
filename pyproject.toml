@@ -1,6 +1,6 @@
 [project]
 name = "gcontext-ai"
-version = "0.15.0"
+version = "0.16.0"
 description = "A standard for a context/ folder in your repo, plus a small CLI."
 readme = "README.md"
 license = { text = "MIT" }

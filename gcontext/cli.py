@@ -1,4 +1,4 @@
-"""gcontext CLI. One server you start, clients connect to its URL. State is files."""
+"""gcontext CLI. A standard for a context/ folder, plus a small CLI."""
 
 import argparse
 import json
@@ -10,16 +10,13 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-import uuid
 from pathlib import Path
 
 from . import __version__
 from . import commands as commands_mod
 from . import exec as exec_mod
-from . import ledger as ledger_mod
 from . import secrets as secrets_mod
 from . import server
-from . import state
 
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -33,116 +30,6 @@ PORT_LOCKFILE = ".gcontext-port"
 # The reload rule from docs/setup-script.md: one wording, reused everywhere.
 RESTART_RULE = ("Run `gcontext reload`, then reconnect in your client (`/mcp` in Claude Code) "
                 "if it reports a reconnect is needed. If the server is stopped: `gcontext serve`.")
-
-STATUS_COLOR = {
-    "loaded": GREEN,
-    "on demand": DIM,
-    "skipped": DIM,
-    "uncontrolled": YELLOW,
-}
-
-
-def print_ledger(project_dir: Path):
-    for i, pipe in enumerate(ledger_mod.build(project_dir), 1):
-        color = STATUS_COLOR.get(pipe["status"], "")
-        label = f"{pipe['label']} ".ljust(36, ".")
-        status = pipe["status"].upper() if pipe["status"] == "uncontrolled" else pipe["status"]
-        print(f"  {i}. [{pipe['id']}] {label} {color}{status}{RESET} {DIM}{pipe['detail']}{RESET}")
-
-
-INIT_INSTRUCTIONS = """\
-# Agent
-
-Describe what this agent is for and how it should behave. This file is yours;
-gcontext pushes it to every runtime that connects, right after its own fixed
-framework instructions (which already cover the tools, connections,
-modules, and agents).
-"""
-
-INIT_SECRETS = """\
-# Secret VALUES live here and never leave this machine (this file is gitignored).
-# EXAMPLE_API_KEY=...
-"""
-
-INIT_AGENT_GITIGNORE = """\
-secrets.env
-.venv/
-.venv-sync.lock
-"""
-
-INIT_README = """\
-# {name}
-
-This folder is the state of a [gcontext](https://pypi.org/project/gcontext-ai/)
-agent: everything it knows lives here as plain files.
-
-Run it:
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh   # once: uv, which gcontext needs at runtime
-uv tool install gcontext-ai                       # once
-gcontext up .                 # from this folder (or: gcontext up <path> from anywhere)
-```
-
-The server prints a URL and the one-line command to connect your client
-(Claude Code, Claude Desktop, Codex, Cursor). The client does the reasoning;
-this folder is the memory.
-
-Three ideas cover the folder:
-
-- Memory: the agent's files. `agent.md` is its definition, pushed to every
-  client at connect; `modules/` holds knowledge by topic; `archive/` holds
-  retired state; installed agents live in `agents/` and bring their own
-  commands.
-- Reach: `connections/` holds the services the agent can use; `secrets.env`
-  holds the secret values. It is gitignored and never leaves this machine.
-- Steering: commands (slash commands in your client) and resources (state
-  files you attach to a message).
-"""
-
-def cmd_init(args):
-    target = Path(args.directory).resolve()
-    if target.exists() and any(target.iterdir()):
-        print(f"Error: {target} already exists and is not empty.", file=sys.stderr)
-        sys.exit(1)
-
-    name = target.name
-    install_id = str(uuid.uuid4())
-    files = {
-        "README.md": INIT_README.format(name=name),
-        "agent.md": INIT_INSTRUCTIONS,
-        "secrets.env": INIT_SECRETS,
-        ".gitignore": INIT_AGENT_GITIGNORE,
-        "connections/.gitkeep": "",
-        "modules/.gitkeep": "",
-        "agents/.gitkeep": "",
-        "archive/.gitkeep": "",
-    }
-    for rel, content in files.items():
-        f = target / rel
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(content)
-
-    (target / "secrets.env").chmod(0o600)
-
-    from gcontext.telemetry import ping_install
-    ping_install(install_id, __version__)
-
-    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} created {name}")
-    print(f"{DIM}State: {target}{RESET}")
-    print()
-    print("The folder is the agent's Memory: plain files, version it with git, edit it freely.")
-    print("Reach (connections plus secrets) and Steering (commands and resources) come next:")
-    print("the setup command builds them with you.")
-    if os.environ.get("GCONTEXT_TELEMETRY") != "0":
-        print(f"{DIM}Sent anonymous install event. Disable with GCONTEXT_TELEMETRY=0{RESET}")
-    print()
-    pad = min(max(len(f"gcontext up {args.directory}"), len(f"/mcp__{name}__setup")) + 4, 44)
-    print("Steps:")
-    print(f"  1. {f'gcontext up {args.directory}':<{pad}}  start the server")
-    print(f"  2. {'connect your client':<{pad}}  the up banner prints the exact command per client")
-    print(f"  3. {f'run /mcp__{name}__setup':<{pad}}  in the client: describe what the agent should do, it builds the rest")
-
 
 def find_project_dir(path: str | None) -> Path:
     p = Path(path).resolve() if path else Path.cwd().resolve()
@@ -324,30 +211,15 @@ def cmd_serve(args):
     print(f"  Claude Desktop:  Settings -> Connectors -> Add custom connector -> {url}")
     print(f'  Cursor:          "{name}": {{"url": "{url}"}} in ~/.cursor/mcp.json')
     print(f'  Codex:           [mcp_servers.{name}] url = "{url}" in ~/.codex/config.toml')
-    print("  Details:         gcontext connect")
     print()
-    if n_instruction_lines:
-        print(f"Memory: framework instructions ({n_base_lines} lines) + agent.md ({n_instruction_lines} lines), pushed to every client at connect.")
-    else:
-        print(f"{YELLOW}Memory: no agent.md, clients receive only the framework instructions ({n_base_lines} lines) at connect.{RESET}")
-    n_connections = len(state.load_connections(project_dir))
-    if n_connections:
-        print(f"Reach: {n_connections} connection(s); check their secrets with gcontext status.")
-    else:
-        print("Reach: no connections yet; the setup command adds them.")
-    n_agents = len(state.discover_agents(project_dir))
-    if n_agents:
-        print(f"Agents: {n_agents} installed")
+    print(f"Instructions: {n_base_lines} framework + {n_instruction_lines} project lines, pushed at connect.")
     builtin_names = ", ".join(p.stem for p in commands_mod.discover_framework_prompts())
-    prompt_bits = [f"{n_framework_prompts} built-in commands ({builtin_names})"]
+    prompt_bits = [f"{n_framework_prompts} built-in ({builtin_names})"]
     if n_commands:
         prompt_bits.append(f"{n_commands} project command(s)")
-    print(f"Steering: {' + '.join(prompt_bits)}, slash commands in your client.")
+    print(f"Commands: {' + '.join(prompt_bits)}")
     print()
-    print("Clients appear below as they connect. Ctrl+C stops the server,")
-    print("and every client cleanly loses access.")
-    print()
-    print("Next: connect your client with the command above (already connected: /mcp to reconnect).")
+    print("Clients appear below as they connect. Ctrl+C stops the server.")
     print()
 
     write_port_lockfile(project_dir, port)
@@ -362,10 +234,6 @@ def cmd_serve(args):
 
 def cmd_status(args):
     project_dir = find_project_dir(args.project)
-
-    connections = state.load_connections(project_dir)
-    modules = state.discover_modules(project_dir)
-    agents = state.discover_agents(project_dir)
     port = resolve_port(args, project_dir)
 
     name = project_dir.name
@@ -388,118 +256,22 @@ def cmd_status(args):
         for s in sessions:
             print(f"  {GREEN}{s['client']}{RESET} {DIM}{s['version']}{RESET}  connected {s['connected']}  last activity {s['last_seen']}")
         stale = live.get("stale") or {}
-        if stale.get("agent_md"):
-            print(f"  {YELLOW}agent.md changed since server start; run gcontext reload to push the new version{RESET}")
         if stale.get("commands"):
-            print(f"  {YELLOW}commands changed since server start; run gcontext reload to re-register them{RESET}")
-        needs_restart = bool(stale.get("agent_md") or stale.get("commands"))
+            print(f"  {YELLOW}files changed since server start; run gcontext reload{RESET}")
+        needs_restart = bool(stale.get("commands"))
     print()
 
-    instructions = project_dir / "agent.md"
-    if instructions.exists():
-        lines = len(instructions.read_text().splitlines())
-        print(f"Instructions: agent.md ({lines} lines)")
-        print()
-
-    print("Connections:")
-    if not connections:
-        print(f"  {DIM}none defined{RESET}")
-    for cname in connections:
-        print(f"  {cname}")
+    has_context = (project_dir / "context").is_dir()
+    if has_context:
+        print(f"Context: {project_dir / 'context'}")
+    else:
+        print(f"Context: {YELLOW}no context/ folder found{RESET}")
     print()
 
-    if modules:
-        print("Modules:")
-        for mname, mod in modules.items():
-            suffix = f" {DIM}- {mod.description}{RESET}" if mod.description else ""
-            print(f"  {mname}{suffix}")
-        print()
-
-    if agents:
-        print("Agents:")
-        for aname, agent in agents.items():
-            suffix = f" {DIM}- {agent.description}{RESET}" if agent.description else ""
-            print(f"  {aname}{suffix}")
-        print()
-
-    archived_line = state.archived_line(project_dir)
-    if archived_line:
-        print(f"{DIM}{archived_line}{RESET}")
-        print()
-
-    print(f"{DIM}No runtime included. Point any MCP client at the URL above.{RESET}")
+    print(f"{DIM}Point any MCP client at the server URL.{RESET}")
     if needs_restart:
         print()
         print(f"Next: {RESTART_RULE}")
-
-
-def cmd_connect(args):
-    project_dir = find_project_dir(args.project)
-    name = project_dir.name
-    port = resolve_port(args, project_dir)
-    url = server_url(port)
-
-    live = fetch_status(port)
-    if live is None:
-        print(f"{YELLOW}Server not running.{RESET} Start it first, in this or another terminal:")
-        print()
-        print(f"  gcontext up {project_dir}")
-        print()
-
-    client = args.client
-
-    if client == "claude":
-        print(f"{BOLD}Claude Code{RESET}")
-        print()
-        print("Run once, from the directory where you use claude (or add --scope user")
-        print("to make it available everywhere):")
-        print()
-        print(f"  claude mcp add --transport http {name} {url}")
-
-    elif client == "desktop":
-        print(f"{BOLD}Claude Desktop{RESET}")
-        print()
-        print("Settings -> Connectors -> Add custom connector, then paste:")
-        print()
-        print(f"  {url}")
-
-    elif client == "codex":
-        print(f"{BOLD}Codex{RESET}")
-        print()
-        print("Add to ~/.codex/config.toml:")
-        print()
-        print(f"[mcp_servers.{name}]")
-        print(f'url = "{url}"')
-
-    elif client == "cursor":
-        print(f"{BOLD}Cursor{RESET}")
-        print()
-        print("Add to .cursor/mcp.json (project) or ~/.cursor/mcp.json (global):")
-        print()
-        print(json.dumps({"mcpServers": {name: {"url": url}}}, indent=2))
-
-    else:
-        print(f"{BOLD}Any MCP client{RESET}")
-        print()
-        print("gcontext speaks MCP over streamable HTTP. Point your client at:")
-        print()
-        print(f"  {url}")
-
-    print()
-    print("Context this client will receive:")
-    print_ledger(project_dir)
-    print()
-    print(f"{DIM}Verify anytime with: gcontext status{RESET}")
-
-
-def cmd_context(args):
-    project_dir = find_project_dir(args.project)
-    name = project_dir.name
-
-    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} {name}")
-    print(f"{DIM}Every pipe that inserts context into an attached agent.{RESET}")
-    print()
-    print_ledger(project_dir)
 
 
 def find_context_project_dir(path: str | None) -> Path:
@@ -656,43 +428,27 @@ def cmd_statusline(args):
 def main():
     parser = argparse.ArgumentParser(
         prog="gcontext",
-        description="Agent state in a folder, served at a URL. Bring your own runtime.",
+        description="A standard for a context/ folder, plus a small CLI: install, serve, check.",
     )
     parser.add_argument("--version", action="version", version=f"gcontext {__version__}")
     subparsers = parser.add_subparsers(dest="command")
 
-    init_parser = subparsers.add_parser("init", help="Scaffold a new agent state folder")
-    init_parser.add_argument("directory", help="Directory to create (its name becomes the agent name)")
-
     def add_common(p):
-        p.add_argument("project", nargs="?", help="Path to gcontext project directory")
+        p.add_argument("project", nargs="?", help="Path to project directory")
         p.add_argument("--port", type=int, help=f"Server port (default: {DEFAULT_PORT})")
 
     serve_parser = subparsers.add_parser(
         "serve",
         aliases=["up"],
-        help="Start the server. Clients connect to its URL",
+        help="Start the MCP server for a project",
     )
     add_common(serve_parser)
 
-    status_parser = subparsers.add_parser("status", help="Server up? Who is connected? Plus connections, secrets, modules")
+    status_parser = subparsers.add_parser("status", help="Show server and project status")
     add_common(status_parser)
 
-    reload_parser = subparsers.add_parser("reload", help="Apply agent.md and command edits to the running server")
+    reload_parser = subparsers.add_parser("reload", help="Apply file changes to the running server")
     add_common(reload_parser)
-
-    connect_parser = subparsers.add_parser("connect", help="Show how to point a client at the server URL")
-    connect_parser.add_argument(
-        "client",
-        nargs="?",
-        default="generic",
-        choices=["claude", "desktop", "codex", "cursor", "generic"],
-        help="Which MCP client to show instructions for",
-    )
-    add_common(connect_parser)
-
-    context_parser = subparsers.add_parser("context", help="Show the context ledger: every pipe into the agent, per mode")
-    add_common(context_parser)
 
     install_parser = subparsers.add_parser("install", help="Install a local package into context/packages/")
     install_parser.add_argument("source", help="Path to a local package folder")
@@ -700,24 +456,21 @@ def main():
     install_parser.add_argument("--skip-secrets", action="store_true", help="Install even if required secrets are missing")
 
     check_parser = subparsers.add_parser(
-        "check", help="Check the context standard in a project"
+        "check", help="Run the context/ standard checks"
     )
     check_parser.add_argument("project", nargs="?", help="Project root that contains context/")
 
-    statusline_parser = subparsers.add_parser("statusline", help="One-line server state for Claude Code statusline or claude-hud")
+    statusline_parser = subparsers.add_parser("statusline", help="One-line server state for status display")
     add_common(statusline_parser)
     statusline_parser.add_argument("--color", action="store_true", help="Enable ANSI color codes in output")
 
     args = parser.parse_args()
 
     commands = {
-        "init": cmd_init,
         "serve": cmd_serve,
         "up": cmd_serve,
         "status": cmd_status,
         "reload": cmd_reload,
-        "connect": cmd_connect,
-        "context": cmd_context,
         "install": cmd_install,
         "check": cmd_check,
         "statusline": cmd_statusline,
