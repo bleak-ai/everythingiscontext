@@ -13,6 +13,7 @@ CLAUDE_MD_LINES = [
     "Read context/project/index.md at the start of every session.",
     "Follow context/system/rules.md for saves and structure changes.",
 ]
+OLD_STOP_HOOK_NAME = "save" + "-every-n-turns.py"
 
 
 def _standard_root():
@@ -43,7 +44,7 @@ def _collect_bundle_files(standard: Path) -> list[tuple[str, str]]:
     return sorted(pairs, key=lambda p: p[1])
 
 
-def _write_files(target_dir: Path, today: str) -> list[str]:
+def _write_files(target_dir: Path, today: str, init_time: str) -> list[str]:
     """Write bundled files into target_dir. Return status lines."""
     standard = _standard_root()
     pairs = _collect_bundle_files(standard)
@@ -58,9 +59,10 @@ def _write_files(target_dir: Path, today: str) -> list[str]:
         dest.parent.mkdir(parents=True, exist_ok=True)
         content = Path(src_path).read_text(encoding="utf-8")
 
-        # log.md: substitute {date} with today
+        # log.md: substitute the init date and timestamp
         if dest_rel.endswith("log.md"):
             content = content.replace("{date}", today)
+            content = content.replace("{iso}", init_time)
 
         dest.write_text(content, encoding="utf-8")
         lines.append(f"wrote {dest_rel}")
@@ -133,7 +135,7 @@ STOP_HOOK_ENTRY = {
             "command": (
                 'uv run --no-project python3 '
                 '"$CLAUDE_PROJECT_DIR"'
-                '/context/system/scripts/save-every-n-turns.py'
+                '/context/system/scripts/journal-every-n-turns.py'
             ),
             "timeout": 10,
         }
@@ -160,14 +162,29 @@ def _update_settings_json(target_dir: Path) -> str:
     except (json.JSONDecodeError, ValueError):
         return "kept .claude/settings.json (could not parse)"
 
-    # Check if save-every-n-turns.py is already registered
+    # Keep the file when the journal hook is already registered.
     hooks = data.get("hooks", {})
     stop_list = hooks.get("Stop", [])
     for entry in stop_list:
         for hook in entry.get("hooks", []):
             cmd = hook.get("command", "")
-            if "save-every-n-turns.py" in cmd:
+            if "journal-every-n-turns.py" in cmd:
                 return "kept .claude/settings.json"
+
+    # Rename the old hook command in place.
+    for entry in stop_list:
+        for hook in entry.get("hooks", []):
+            cmd = hook.get("command", "")
+            if OLD_STOP_HOOK_NAME in cmd:
+                hook["command"] = cmd.replace(
+                    OLD_STOP_HOOK_NAME,
+                    "journal-every-n-turns.py",
+                )
+                settings_path.write_text(
+                    json.dumps(data, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                return "updated .claude/settings.json (hook renamed)"
 
     # Add the entry
     if "hooks" not in data:
@@ -181,10 +198,12 @@ def _update_settings_json(target_dir: Path) -> str:
 
 def run_init(target_dir: Path) -> int:
     """Run the full init sequence. Returns the exit code from check."""
-    today = datetime.date.today().isoformat()
+    now = datetime.datetime.now().astimezone()
+    today = now.date().isoformat()
+    init_time = now.isoformat(timespec="seconds")
 
     # Write bundled files
-    file_lines = _write_files(target_dir, today)
+    file_lines = _write_files(target_dir, today, init_time)
     for line in file_lines:
         print(line)
 

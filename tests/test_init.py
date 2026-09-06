@@ -30,7 +30,11 @@ def test_fresh_dir_writes_all_files(fresh_dir, monkeypatch):
         lambda *a, **kw: type("R", (), {"returncode": 0})(),
     )
 
-    lines = init_mod._write_files(fresh_dir, "2026-09-07")
+    lines = init_mod._write_files(
+        fresh_dir,
+        "2026-09-07",
+        "2026-09-07T17:19:33+02:00",
+    )
 
     wrote = [l for l in lines if l.startswith("wrote ")]
     assert len(wrote) > 0, "Should write at least one file"
@@ -41,9 +45,11 @@ def test_fresh_dir_writes_all_files(fresh_dir, monkeypatch):
     assert (fresh_dir / "context" / "system" / "scripts" / "sync-index-files.py").is_file()
     assert (fresh_dir / "context" / "system" / "scripts" / "githooks" / "pre-commit").is_file()
     assert (fresh_dir / "context" / "project" / "index.md").is_file()
+    assert (fresh_dir / "context" / "journal" / "index.md").is_file()
     assert (fresh_dir / "context" / "index.md").is_file()
     assert (fresh_dir / ".claude" / "commands" / "save.md").is_file()
     assert (fresh_dir / ".claude" / "commands" / "check-structure.md").is_file()
+    assert (fresh_dir / ".claude" / "commands" / "add-to-context.md").is_file()
 
 
 def test_second_run_keeps_everything(fresh_dir, monkeypatch):
@@ -53,8 +59,16 @@ def test_second_run_keeps_everything(fresh_dir, monkeypatch):
         lambda *a, **kw: type("R", (), {"returncode": 0})(),
     )
 
-    init_mod._write_files(fresh_dir, "2026-09-07")
-    lines2 = init_mod._write_files(fresh_dir, "2026-09-07")
+    init_mod._write_files(
+        fresh_dir,
+        "2026-09-07",
+        "2026-09-07T17:19:33+02:00",
+    )
+    lines2 = init_mod._write_files(
+        fresh_dir,
+        "2026-09-07",
+        "2026-09-07T17:19:33+02:00",
+    )
 
     kept = [l for l in lines2 if l.startswith("kept ")]
     wrote = [l for l in lines2 if l.startswith("wrote ")]
@@ -115,19 +129,26 @@ def test_hook_path_not_set_outside_git(fresh_dir):
     assert "no git repo" in result
 
 
-def test_log_date_substituted(fresh_dir):
-    """log.md has {date} replaced with today's date."""
+def test_log_markers_substituted(fresh_dir):
+    """log.md has the init date and journal review marker."""
     today = "2026-09-07"
-    init_mod._write_files(fresh_dir, today)
+    init_time = "2026-09-07T17:19:33+02:00"
+    init_mod._write_files(fresh_dir, today, init_time)
 
     log = (fresh_dir / "context" / "system" / "log.md").read_text()
     assert "{date}" not in log
-    assert f"- {today}:" in log
+    assert "{iso}" not in log
+    assert f"- {today}: init, standard 1.0" in log
+    assert f"- {today}: journal review, 0 sessions, up to {init_time}" in log
 
 
 def test_pre_commit_is_executable(fresh_dir):
     """pre-commit hook is made executable."""
-    init_mod._write_files(fresh_dir, "2026-09-07")
+    init_mod._write_files(
+        fresh_dir,
+        "2026-09-07",
+        "2026-09-07T17:19:33+02:00",
+    )
     init_mod._set_hook_executable(fresh_dir)
 
     hook = fresh_dir / "context" / "system" / "scripts" / "githooks" / "pre-commit"
@@ -146,7 +167,7 @@ def test_settings_json_created_when_missing(fresh_dir):
         for entry in data["hooks"]["Stop"]
         for h in entry.get("hooks", [])
     ]
-    assert any("save-every-n-turns.py" in c for c in commands)
+    assert any("journal-every-n-turns.py" in c for c in commands)
 
 
 def test_settings_json_updated_when_existing(fresh_dir):
@@ -173,7 +194,7 @@ def test_settings_json_kept_when_already_present(fresh_dir):
                     "hooks": [
                         {
                             "type": "command",
-                            "command": 'uv run --no-project python3 "$CLAUDE_PROJECT_DIR"/context/system/scripts/save-every-n-turns.py',
+                            "command": 'uv run --no-project python3 "$CLAUDE_PROJECT_DIR"/context/system/scripts/journal-every-n-turns.py',
                             "timeout": 10,
                         }
                     ]
@@ -187,6 +208,46 @@ def test_settings_json_kept_when_already_present(fresh_dir):
     assert msg == "kept .claude/settings.json"
 
 
+def test_settings_json_renames_old_hook_in_place(fresh_dir):
+    """An old save hook is renamed without changing its entry."""
+    (fresh_dir / ".claude").mkdir(parents=True, exist_ok=True)
+    old_hook_name = "save" + "-every-n-turns.py"
+    old_command = (
+        'uv run --no-project python3 "$CLAUDE_PROJECT_DIR"'
+        f"/context/system/scripts/{old_hook_name} --status session"
+    )
+    existing = {
+        "hooks": {
+            "Stop": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": old_command,
+                            "timeout": 20,
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+    settings = fresh_dir / ".claude" / "settings.json"
+    settings.write_text(json.dumps(existing))
+
+    msg = init_mod._update_settings_json(fresh_dir)
+
+    assert msg == "updated .claude/settings.json (hook renamed)"
+    data = json.loads(settings.read_text())
+    stop_entry = data["hooks"]["Stop"][0]
+    assert stop_entry["matcher"] == ""
+    hook = stop_entry["hooks"][0]
+    assert hook["timeout"] == 20
+    assert hook["command"] == old_command.replace(
+        old_hook_name, "journal-every-n-turns.py"
+    )
+
+
 def test_settings_json_invalid_json(fresh_dir):
     """Invalid JSON in settings.json is reported but does not crash."""
     (fresh_dir / ".claude").mkdir(parents=True, exist_ok=True)
@@ -196,14 +257,21 @@ def test_settings_json_invalid_json(fresh_dir):
     assert msg == "kept .claude/settings.json (could not parse)"
 
 
-def test_save_every_n_turns_script_in_bundle(fresh_dir, monkeypatch):
-    """The save-every-n-turns.py script is written by init."""
+def test_journal_scripts_in_bundle(fresh_dir, monkeypatch):
+    """The journal scripts are written by init."""
     monkeypatch.setattr(
         init_mod.subprocess, "run",
         lambda *a, **kw: type("R", (), {"returncode": 0})(),
     )
-    init_mod._write_files(fresh_dir, "2026-09-07")
-    assert (fresh_dir / "context" / "system" / "scripts" / "save-every-n-turns.py").is_file()
+    init_mod._write_files(
+        fresh_dir,
+        "2026-09-07",
+        "2026-09-07T17:19:33+02:00",
+    )
+    scripts = fresh_dir / "context" / "system" / "scripts"
+    assert (scripts / "journal-every-n-turns.py").is_file()
+    assert (scripts / "journal-review.py").is_file()
+    assert not (scripts / ("save" + "-every-n-turns.py")).exists()
 
 
 def test_sync_standard_check(tmp_path):

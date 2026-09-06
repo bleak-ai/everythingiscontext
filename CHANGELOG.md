@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.1.0 (2026-09-07)
+
+### Added
+
+- `context/journal/` stores raw facts by day and session.
+- `journal-every-n-turns.py` writes journal facts through the Stop hook.
+- `journal-review.py` lists review inputs and condenses session transcripts.
+- `/add-to-context` reviews and promotes journal facts into `context/project/`.
+- The tracker shows the number of journal sessions that need review.
+- `gcontext init` writes the journal folder and the initial journal review marker.
+
+### Changed
+
+- The Stop hook interval is ten turns.
+- The Stop hook writes to `context/journal/` instead of `context/project/`.
+- `save-every-n-turns.py` is removed from the bundle.
+
+### Upgrading
+
+Run `gcontext init` again in the project. It renames the hook command
+in `.claude/settings.json` and writes the new files. It never
+overwrites existing files. Copy `rules.md`,
+`track-context-changes.py`, `sync-index-files.py`, and `save.md` by
+hand from the package. You can move the old files away first instead.
+
 ## 1.0.1 (2026-09-07)
 
 - The bundled /save command follows the 1.0 Save steps instead of v5 wording.

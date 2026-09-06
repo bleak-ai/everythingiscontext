@@ -10,16 +10,19 @@ Files written:
 
 - `context/index.md`
 - `context/project/index.md`
+- `context/journal/index.md`
 - `context/system/index.md`
 - `context/system/rules.md`
 - `context/system/log.md`
 - `context/system/scripts/sync-index-files.py`
 - `context/system/scripts/rules_config.py`
 - `context/system/scripts/track-context-changes.py`
+- `context/system/scripts/journal-every-n-turns.py`
+- `context/system/scripts/journal-review.py`
 - `context/system/scripts/githooks/pre-commit`
-- `context/system/scripts/save-every-n-turns.py`
 - `.claude/commands/save.md`
 - `.claude/commands/check-structure.md`
+- `.claude/commands/add-to-context.md`
 
 The command never overwrites an existing file. It reports each file as `wrote` or `kept`.
 
@@ -32,7 +35,10 @@ Read context/project/index.md at the start of every session.
 Follow context/system/rules.md for saves and structure changes.
 ```
 
-It merges a Stop hook entry into `.claude/settings.json` (creates the file when missing, keeps other hooks). The hook runs `save-every-n-turns.py` after every assistant turn.
+It merges a Stop hook entry into `.claude/settings.json`. It creates
+the file when it is missing. It keeps other hooks. The hook runs
+`journal-every-n-turns.py` after every assistant turn. It changes the
+old hook command to the new name.
 
 It prints instructions for the statusline setup (see below), then runs `gcontext check`.
 
@@ -80,10 +86,16 @@ Thresholds: green when under 10 facts and 3 folders, amber when under 20 facts a
 
 `gcontext init` sets `core.hooksPath` to `context/system/scripts/githooks`. The bundled `pre-commit` hook runs `sync-index-files.py --check` and blocks the commit when the structure is broken.
 
-## Forced save
+## Journal hook
 
-A Claude Code Stop hook (`save-every-n-turns.py`) forces a context save every five assistant turns. On every fifth turn, the hook returns a block decision that tells the agent to read `rules.md`, save every durable fact learned since the last save, run `sync-index-files.py --write` and `--check`, then continue. When `stop_hook_active` is true (during a save turn), the hook does not block, so it cannot retrigger itself.
+A Claude Code Stop hook (`journal-every-n-turns.py`) requests a journal
+entry every ten assistant turns. On every tenth turn, the hook returns
+a block decision. The decision tells the agent to append durable facts
+to one session file under `context/journal/`. The agent uses one Write
+or Edit call. It gives no report. It does not sync indexes. When
+`stop_hook_active` is true, the hook does not block. It cannot trigger
+itself.
 
-The interval defaults to 5. Set the `GCONTEXT_SAVE_EVERY` environment variable to override it.
+The interval defaults to 10. Set the `GCONTEXT_SAVE_EVERY` environment variable to override it.
 
 `gcontext init` registers the hook in `.claude/settings.json` automatically.

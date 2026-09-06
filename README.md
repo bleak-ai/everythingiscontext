@@ -37,9 +37,10 @@ standard. There is no other rule file.
 
 After you install gcontext in a project, three things happen.
 
-1. Save. The agent writes durable facts into `context/project/`
-   while you work. A hook forces a save every five turns. You do not
-   ask for it. You review the git diff.
+1. Journal. A hook writes facts into `context/journal/` every ten
+   turns. The hook gives no report. `/add-to-context` reviews the
+   journal and promotes useful facts into `context/project/`. You
+   say "apply" one time.
 2. Track. Your status line shows one line after every turn. It tells
    you how many facts and folders the agent added since the last
    structure check. The line is green, amber, or red.
@@ -70,12 +71,13 @@ You need `uv` (https://docs.astral.sh/uv) and Claude Code.
 
    - `context/index.md` and `context/project/index.md`: the entry
      points of the memory.
+   - `context/journal/`: raw facts that wait for review.
    - `context/system/rules.md`: the standard.
    - `context/system/log.md`: the history of structure checks.
    - `context/system/scripts/`: the scripts listed below.
-   - `.claude/commands/save.md` and `check-structure.md`: the two
-     Claude Code commands `/save` and `/check-structure`.
-   - `.claude/settings.json`: the Stop hook that forces a save.
+   - `.claude/commands/`: the three Claude Code commands `/save`,
+     `/add-to-context`, and `/check-structure`.
+   - `.claude/settings.json`: the Stop hook that writes journal facts.
    - `CLAUDE.md`: two lines that tell the agent to read the memory
      and to follow the rules.
 
@@ -89,8 +91,9 @@ You need `uv` (https://docs.astral.sh/uv) and Claude Code.
    uv run --no-project python3 context/system/scripts/track-context-changes.py . --color
    ```
 
-4. Work as usual. Ask the agent questions. Let it do tasks. The agent
-   saves facts on its own. Type `/save` when you want a save now.
+4. Work as usual. Ask the agent questions. Let it do tasks. The hook
+   writes journal facts on its own. Type `/save` when you want a
+   direct save now. Type `/add-to-context` to review journal facts.
 
 5. When the status line is red, type `/check-structure`. Read the
    proposal. Type "apply".
@@ -120,32 +123,46 @@ The agent runs `--write` after every save. The pre-commit hook runs
 ### track-context-changes.py
 
 This script prints one line for the status line. It counts the fact
-lines and the folders under `context/project/`. It compares the
-count with the last structure check line in `context/system/log.md`.
+lines and the folders under `context/project/`. It also counts journal
+sessions since the last journal review. It compares the counts with
+the last matching lines in `context/system/log.md`.
 
 Output example:
 
 ```text
-context: +4 facts, +0 folders since the structure check (2026-09-06), structure ok
+context: +4 facts, +0 folders since the structure check (2026-09-06), 3 sessions to review, run /add-to-context
 ```
 
 The `--color` flag adds a color. Green means fewer than 10 new facts
 and fewer than 3 new folders. Amber means fewer than 20 facts and
 fewer than 5 folders. Red means more. The line tells you what to do
-next. The script always exits with code 0.
+next. Journal sessions are amber at 3 and red at 6. The worse level
+sets the line color. The script always exits with code 0.
 
-### save-every-n-turns.py
+### journal-every-n-turns.py
 
 This script is a Claude Code Stop hook. Claude Code runs it after
 every assistant turn. The script counts the turns of the session.
-On every fifth turn it tells the agent to save now. The agent reads
-the Save section of the rules, writes the facts it learned, runs
-`sync-index-files.py --write`, and reports the paths. Then it
-continues its task.
+On every tenth turn it tells the agent to append facts to one file
+under `context/journal/`. The script supplies the date, session, time,
+and next entry number. The agent uses one Write or Edit call. It does
+not report the write or sync indexes. Then it continues its task.
 
 The script never triggers itself. It exits without output when a
-save turn is already in progress. Set the environment variable
+hook turn is already in progress. Set the environment variable
 `GCONTEXT_SAVE_EVERY` to change the interval.
+
+### journal-review.py
+
+This script finds journal facts that need review. `--marker` prints
+the last journal review time from `context/system/log.md`. `--list`
+prints changed journal files and session transcripts as JSON. Use
+`--since <iso>` to set a different start time.
+
+`--condense <transcript>` prints the useful text from one transcript.
+Use `--after <iso>` to omit older records. It keeps user text and
+assistant text. It reduces each tool call to its name and first
+argument. It drops tool results, sidechain records, and thinking.
 
 ### githooks/pre-commit
 
@@ -168,11 +185,15 @@ This module reads optional rule toggles for `sync-index-files.py`.
 The standard does not use toggles at the moment. The module returns
 no toggles when no toggle file exists.
 
-## The two commands
+## The three commands
 
 - `/save`: the agent collects the durable facts of the session and
   writes each one into the file of its subject. It does not ask for
   approval. It reports one line per file it changed.
+- `/add-to-context`: the agent reviews journal files and session
+  transcripts. It proposes each new or changed fact and its target
+  path. It waits for "apply". Then it writes the approved facts and
+  records the review time.
 - `/check-structure`: the agent reads every file under
   `context/project/`, applies the file test, the folder test, and
   the pair test, and proposes the target tree. It waits for

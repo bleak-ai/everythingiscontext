@@ -61,6 +61,8 @@ def has_uppercase(name):
 def is_exempt_path(path, root):
     """Return whether a path is inside an exempt directory."""
     relative_parts = path.relative_to(root).parts
+    if relative_parts[:2] == ("context", "journal"):
+        return True
     if any(part in EXEMPT_DIRECTORIES for part in relative_parts[:-1]):
         return True
     return is_package_subpath(path, root, "state")

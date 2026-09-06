@@ -24,10 +24,12 @@ COPY_MAP = [
     ("context/system/scripts/sync-index-files.py", "context/system/scripts/sync-index-files.py"),
     ("context/system/scripts/rules_config.py", "context/system/scripts/rules_config.py"),
     ("context/system/scripts/track-context-changes.py", "context/system/scripts/track-context-changes.py"),
-    ("context/system/scripts/save-every-n-turns.py", "context/system/scripts/save-every-n-turns.py"),
+    ("context/system/scripts/journal-every-n-turns.py", "context/system/scripts/journal-every-n-turns.py"),
+    ("context/system/scripts/journal-review.py", "context/system/scripts/journal-review.py"),
     ("context/system/scripts/githooks/pre-commit", "context/system/scripts/githooks/pre-commit"),
     (".claude/commands/save.md", "commands/save.md"),
     (".claude/commands/check-structure.md", "commands/check-structure.md"),
+    (".claude/commands/add-to-context.md", "commands/add-to-context.md"),
 ]
 
 

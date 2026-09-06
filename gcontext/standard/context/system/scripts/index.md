@@ -6,6 +6,8 @@ Open it before you change validation, tracking, or hooks.
 
 <!-- GENERATED BELOW -->
 - githooks/ (dir): This folder holds git hooks for context validation.
+- journal-every-n-turns.py (py): Request a journal entry every ten assistant turns.
+- journal-review.py (py): List journal review inputs and condense session transcripts.
 - rules_config.py (py): Parse rule toggles from rules.yaml.
 - sync-index-files.py (py): Validate context structure and generate folder indexes.
 - track-context-changes.py (py): Count facts and folders added since the last structure check.

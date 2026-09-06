@@ -82,11 +82,25 @@ what is already here?
    A duplicate adds nothing.
 6. Never ask for approval. Apply, then report the path. The owner
    reviews the git diff.
-7. A Stop hook (save-every-n-turns.py) forces a save every five
-   turns. The agent also saves at the end of a task.
+7. A Stop hook (journal-every-n-turns.py) writes a journal entry every
+   ten turns. /add-to-context promotes journal entries into project/.
+   The agent also saves at the end of a task.
 
 A save may create files and folders. Only a revision moves what
 already exists, apart from the moves in step 3.
+
+## Journal
+
+context/journal/ holds raw facts captured per session. Each session
+file stays under the date of its first entry. Each entry starts with
+`## Entry N (HH:MM)`. It then has one fact per line. Facts include
+decisions, paths, names, numbers, results, and traps. Do not add
+narration, routing, or an index sync.
+
+The journal is outside the file test, the folder test, and the pair
+test. It is outside the tracker fact count and the index checks.
+/add-to-context reviews journal entries and promotes facts into
+project/.
 
 ## Pointers
 
@@ -128,10 +142,11 @@ index entry that names a missing entry or omits an existing entry,
 a TODO(describe) placeholder, and a pointer line whose target file
 does not exist. A git pre-commit hook runs --check. If a check
 blocks legitimate work, stop and ask; never weaken the check alone.
+sync-index-files.py skips context/journal/.
 
 ## Rule about rules
 
 No rule without a consumer: every line above is enforced by
 sync-index-files.py, track-context-changes.py,
-save-every-n-turns.py, by a placement step, or by a revision step.
-A rule that nothing enforces is deleted.
+journal-every-n-turns.py, journal-review.py, by a placement step, or
+by a revision step. A rule that nothing enforces is deleted.
