@@ -1,13 +1,13 @@
 # share-agent
 
-Instructions for an AI that turns a private, lived agent into a distributable template. You are the AI; the human in the conversation is the author. The input is their agent module, personal state included. The output is a template folder that follows the agent template standard (docs/agents.md) and contains zero personal data.
+Instructions for an AI that turns a private, lived agent into a distributable template. You are the AI; the human in the conversation is the author. The input is their agent module, personal state included. The output is a template folder that follows the agent template standard ([agents.md](agents.md)) and contains zero personal data.
 
 Work through the phases in order. Propose, let the author confirm, then act. Do not skip a phase.
 
 ## Phase 0: load
 
 1. Ask the author which agent module to share, if not already stated. Read it completely: `index.md`, `steps/`, `functions/` and `commands/` if present, and the run folders in `runs/`.
-2. Read the template spec (`docs/agents.md`, or fetch it from the gcontext repo if it is not in reach). Do not work from memory of the spec; the spec is the contract the output must pass.
+2. Read the template spec ([agents.md](agents.md)). Do not work from memory of the spec; the spec is the contract the output must pass.
 
 ## Phase 1: eligibility
 
@@ -28,7 +28,7 @@ Walk `index.md`, every file in `steps/`, and `functions/` if present. Collect ev
 Classify each element as exactly one of:
 
 - **(a) Parameter slot**: a value that changes the scope or input of a single run. The test: "does this value appear in `0-parameters.*` and does it change what the run does?" If yes, it is a parameter. If the value configures which service to talk to, which queue to pull from, or how to authenticate, it belongs in the connection, not here. Becomes a `parameters` entry in the manifest.
-- **(b) Connection requirement**: a service capability the agent needs, including all configuration that identifies *which* instance or account to use (team, project, queue, environment). Becomes a structured `connections` entry (`kind` + `description`, plus optional `examples`), described generically ("the hosting panel API", not "Coolify").
+- **(b) Connection requirement**: a service capability the agent needs, including all configuration that identifies which instance or account to use (team, project, queue, environment). Becomes a structured `connections` entry (`kind` + `description`, plus optional `examples`), described generically ("the hosting panel API", not "Coolify").
 - **(c) Personal state**: files or content that must not ship (playbooks learned from the author's systems, configs, credentials references, logs). Excluded from the template; the setup command will regenerate the empty shapes.
 - **(d) Generic rewrite**: a concrete-service mention inside a step that stays in the text but must be reworded to the capability kind.
 
@@ -38,11 +38,11 @@ Present the full classification as one list and get the author's confirmation be
 
 Create the template folder next to the source module (for example `<agent-id>-template/`). Build:
 
-- **`index.md`**: the frontmatter manifest per the spec: `id` (url-safe slug), `name`, `description`, `parameters` (name, description, required), `connections` (kind, description, optional examples), optional `learns`, `tags`. The `parameters` and `connections` fields are critical: the directory page on gcontext.ai reads them from the frontmatter and renders them as two separate sections on the agent's page. Connections show the services the agent talks to (mapped once at setup). Parameters show the values the user provides per run (scope, target, input). Every entry must have a clear, user-facing `description`. Then the body, rewritten clean: the objective in the first paragraph, what each parameter means in practice, the agent's run naming scheme, and the general cross-step context.
+- **`index.md`**: the frontmatter manifest per the spec: `id` (url-safe slug), `name`, `description`, `parameters` (name, description, required), `connections` (kind, description, optional examples), optional `learns`, `tags`. Then the body, rewritten clean: the objective in the first paragraph, what each parameter means in practice, the agent's run naming scheme, and the general cross-step context.
 - **`steps/`**: the same files as the source, with the classified specifics replaced by parameter references and generic capability wording. Keep the structure untouched: the shapes were proven by use; you strip, you do not redesign. Every step file must state Purpose, Input, Output (with schema when tabular), How to execute, and Done when; if a source step lacks one of these, derive it from what the lived runs show and confirm with the author.
 - **`functions/`**: same treatment, only if the source has it.
-- **`commands/setup.md`**: generate it from the slots, following the setup contract in the spec: read index.md and steps/index.md first; bind every setup-time parameter; map each connection requirement to a real service in the user's environment; generate the personal state (list in the command exactly what it creates); smoke-test the critical path; never edit steps/. Give it command frontmatter (`description`, optional `parameters`) and a self-contained prose body that assumes only file access, so it works in gcontext as an MCP prompt and standalone in any agent.
-- **`commands/run.md`**: generate the run driver, following the run command contract in the spec. It must: read the agent's index.md and steps/index.md, collect per-run parameters, create the run folder with index.md and 0-parameters.*, execute each step in order writing output into per-step folders (e.g. `1-collect/results.md`), update the run's index.md after each step, and close the run with `done/info.md`. Give it command frontmatter (`description`, optional `parameters`) and a self-contained prose body.
+- **`commands/setup.md`**: generate it from the slots, following the setup contract in [agents.md](agents.md): read index.md and steps/index.md first; bind every setup-time parameter; map each connection requirement to a real service in the user's environment; generate the personal state (list in the command exactly what it creates); smoke-test the critical path; never edit steps/. Give it command frontmatter (`description`, optional `parameters`) and a self-contained prose body that assumes only file access.
+- **`commands/run.md`**: generate the run driver, following the run command contract in [agents.md](agents.md). It must: read the agent's index.md and steps/index.md, collect per-run parameters, create the run folder with index.md and 0-parameters.*, execute each step in order writing output into per-step folders (e.g. `1-collect/results.md`), update the run's index.md after each step, and close the run with `done/info.md`. Give it command frontmatter (`description`, optional `parameters`) and a self-contained prose body.
 
 ## Phase 4: fabricate the example run
 
@@ -50,7 +50,7 @@ Build `runs/example/` inside the template, in the exact runs/ shape: `index.md` 
 
 - Default: start from the author's most representative real run and replace every real value with a coherent fake: invented names, plausible numbers, same schemas, same story arc.
 - Fallback: if the author's runs are too sensitive to anonymize confidently, fabricate the example fully from the step definitions. Say so to the author.
-- Keep the fake data internally consistent: the same invented name must flow through all steps, so a site visitor can follow one item from parameters to done. This example is what the directory page renders on the agent's page; it is the template's showcase.
+- Keep the fake data internally consistent: the same invented name must flow through all steps, so a site visitor can follow one item from parameters to done.
 
 ## Phase 5: verify
 
@@ -58,11 +58,11 @@ Run three checks and show the results:
 
 1. **Spec compliance**: every required file exists (index.md with parseable frontmatter carrying all fields, steps/ with index and numbered files, commands/setup.md, commands/run.md, runs/example/ complete with per-step folders and done/); every step states Purpose, Input, Output, How, Done when.
 2. **Leak scan**: search the entire template, example run included, for every author-specific string collected in phase 2, plus generic patterns: email addresses, things shaped like API keys or tokens, the author's domains. Present every hit. The template passes only with zero unexplained hits.
-3. **Cold read**: in a fresh context (a subagent or a new session) that sees only the template folder, have it explain back what the installed agent does, what it needs, and what a run produces. If the explanation is wrong or incomplete, the template is not self-contained; fix and repeat.
+3. **Cold read**: in a fresh context that sees only the template folder, have it explain back what the installed agent does, what it needs, and what a run produces. If the explanation is wrong or incomplete, the template is not self-contained; fix and repeat.
 
 ## Phase 6: hand off
 
-The finished template is a local folder. Run `gcontext share <template-folder>` to validate it against the template standard. Then submit it by opening a pull request against [github.com/bleak-ai/agents](https://github.com/bleak-ai/agents), adding the folder at the repo root. The share command prints the exact steps.
+The finished template is a local folder. Validate it against the template standard. Then submit it by opening a pull request against [github.com/bleak-ai/agents](https://github.com/bleak-ai/agents), adding the folder at the repo root.
 
 Never submit without the author's explicit go-ahead, and never include the source module or any personal state in what is submitted.
 

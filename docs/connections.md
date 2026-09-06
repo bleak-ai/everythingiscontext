@@ -18,17 +18,14 @@ The manifest declares what the connection needs. All fields:
 ```yaml
 name: github                  # folder name, lowercase
 description: GitHub REST API - repos, issues, pull requests
-kind: source-control           # capability type (see valid values below)
+kind: source-control           # capability type
 secrets:                      # secret NAMES only, never values
   - GITHUB_TOKEN
 deps:                         # Python packages the scripts import
   - requests
 ```
 
-`kind` declares the capability type of the connection. The framework
-validates it against the fixed set enforced by `gcontext/kinds.py` and
-documented in [docs/setup-script.md](setup-script.md#connection-kinds),
-for example `ticket-tracker` or `browser`. Agent manifests
+`kind` declares the capability type of the connection. Agent manifests
 reference connections by kind, not by product name, so the kind is what
 links a connection to an agent's requirements.
 
@@ -36,8 +33,7 @@ links a connection to an agent's requirements.
 one `NAME=value` per line, gitignored. The server reads `secrets.env` live,
 so adding a value needs no restart. When a script runs, the server injects
 the values as environment variables and scrubs them from the output, so they
-never enter the context window. `gcontext status` shows which declared
-secrets have values.
+never enter the context window.
 
 `deps` are installed into the project's virtual environment on demand (via
 uv) when a script needs them. Prefer plain HTTPS with `requests` over a service
@@ -57,11 +53,6 @@ Write what a fresh session needs to use the API, not marketing:
 Keep it current: when a script run teaches something (an endpoint quirk, a
 pagination rule), record it in `index.md` right away. The file is the
 connection's accumulated experience.
-
-A complete example lives at
-[examples/ops-agent/connections/stripe](../examples/ops-agent/connections/stripe):
-a manifest, and an `index.md` with auth, gotchas, and patterns recorded from
-real use.
 
 ## scripts/
 

@@ -2,7 +2,7 @@
 
 An agent is a module with a fixed shape, installed into its own home: every installed agent lives in the top-level `agents/` folder, while `modules/` holds accumulated knowledge. A module is any folder of files on a topic; an agent follows the specific structure defined here (frontmatter manifest, steps/, runs/). It is a series of steps the AI executes with judgment, where every run leaves a persistent trace on disk. The agent remembers what happened last run, accumulates knowledge, and gets better over time. A skill or prompt runs and forgets; an agent holds state.
 
-This document is the template spec: the contract an agent folder must follow to be distributable. The CLI (`gcontext add`), the site directory, and the authoring tooling all build against it. It is one standard for all agents; there are no per-domain variants.
+This document is the template spec: the contract an agent folder must follow to be distributable. The CLI, the site directory, and the authoring tooling all build against it. It is one standard for all agents; there are no per-domain variants.
 
 ## Folder anatomy
 
@@ -35,8 +35,7 @@ The manifest is YAML frontmatter at the top of the agent's `index.md`. There is 
 
 ```yaml
 ---
-id: coolify-ops              # unique, url-safe slug; the argument to `gcontext add`
-                             # and the site path /agents/<id>
+id: coolify-ops              # unique, url-safe slug
 name: Coolify Ops            # human display name, shown in the directory
 description: >               # one or two sentences; the directory card text
   Mirror of a Coolify instance with operational playbooks that
@@ -49,7 +48,7 @@ parameters:                  # what a run starts with; bound at setup or per run
     description: Limit operations to one project
     required: false
 connections:                 # service capabilities the agent needs
-  - kind: deploy-target      # capability kind from the enum in docs/setup-script.md
+  - kind: deploy-target      # capability kind
     description: The hosting panel API (Coolify, Dokploy, or similar)
 flow:                        # the agent's loop from the user's seat, in order
   - Report an incident in plain words
@@ -78,11 +77,11 @@ Field notes:
 - `id` is the identity everywhere: the install argument, the folder name, the site slug. Lowercase letters, digits, hyphens.
 - `name` is the display name for the directory and the agent page; the id stays the machine identity.
 - `parameters` are slots, not values. The setup interview or the run start binds them. Never ship bound values.
-- `connections` entries are structured (`kind` plus `description`) so the site can render them as requirement badges. They name capability kinds, not products; the valid `kind` values are the fixed enum in docs/setup-script.md. The body of `index.md` may mention concrete services as examples; the steps must not depend on one (see docs/modules.md on connection-agnostic modules). The agent maps kinds to its own `connections/` at run time.
-- `connections[].examples` is optional: a list of product names (Linear, Jira, GitHub Issues) shown on the site for that connection, without binding the agent to any one of them.
-- `agents` is optional: a list of concrete registry agent ids this agent requires. Unlike connections, entries name a specific agent, not a capability: the dependency is on that agent's files and commands. Install resolves the list recursively and installs what is missing; an id already present under `agents/` is satisfied. The site renders each entry as a Requires badge. A declared dependency may be named directly in the steps; the rule is "name nothing you have not declared" (see docs/modules.md).
-- `flow` is an ordered list of short strings: the agent's loop as the user experiences it, one line per beat, typically 4 to 6 entries. Each entry says what the user does or what the agent does back, in plain words, no internal vocabulary. The explain command renders it as the numbered Flow section and walks it step by step. Required: the validator (`gcontext share`) rejects templates without it.
-- `learns` is optional prose describing what the agent accumulates over time (playbooks, quirks of the user's instance). It renders as the Learns section on the site. Omit it when the agent has nothing to say here.
+- `connections` entries are structured (`kind` plus `description`) so the site can render them as requirement badges. They name capability kinds, not products; the body of `index.md` may mention concrete services as examples; the steps must not depend on one (see [modules.md](modules.md) on connection-agnostic modules). The agent maps kinds to its own `connections/` at run time.
+- `connections[].examples` is optional: a list of product names shown on the site for that connection, without binding the agent to any one of them.
+- `agents` is optional: a list of concrete registry agent ids this agent requires. Unlike connections, entries name a specific agent, not a capability: the dependency is on that agent's files and commands. Install resolves the list recursively and installs what is missing; an id already present under `agents/` is satisfied. A declared dependency may be named directly in the steps; the rule is "name nothing you have not declared" (see [modules.md](modules.md)).
+- `flow` is an ordered list of short strings: the agent's loop as the user experiences it, one line per beat, typically 4 to 6 entries. Each entry says what the user does or what the agent does back, in plain words, no internal vocabulary.
+- `learns` is optional prose describing what the agent accumulates over time. Omit it when the agent has nothing to say here.
 - `tags` is a flat list for the directory. Keep it short.
 
 After the frontmatter, the body of `index.md` carries: the objective in the first paragraph, what each parameter means in practice, the agent's run naming scheme (see runs/), and the general context the agent needs across all steps. Context specific to one step belongs in that step's file.
@@ -153,9 +152,9 @@ Never ships, generated locally at setup and use:
 - the user's own run folders in `runs/`
 - every personalized file: configs, credentials references, scripts bound to the user's systems, playbooks learned from the user's own work
 
-On install, `gcontext add` writes a `.installed` manifest file inside the agent folder (`agents/<id>/`). It records per-file SHA256 hashes of every shipped file, the registry source, and the install ref. This manifest is hidden from `list_dir`, `grep`, and resource listings (same policy as `.git`), but stays readable by explicit path. `gcontext update <id>` (or the `agent` tool's update action) uses it to pull upstream changes without touching personalized files: unchanged-locally files get the upstream version, locally-modified files are kept, files changed on both sides get the upstream version written as `<file>.new` for the agent to merge. Your runs, insights, and personal state are never in the manifest and are never touched.
+On install, the CLI writes a `.installed` manifest file inside the agent folder (`agents/<id>/`). It records per-file SHA256 hashes of every shipped file, the registry source, and the install ref. This manifest is hidden from `list_dir`, `grep`, and resource listings, but stays readable by explicit path. On update, unchanged-locally files get the upstream version, locally-modified files are kept, files changed on both sides get the upstream version written as `<file>.new` for the agent to merge. Your runs, insights, and personal state are never in the manifest and are never touched.
 
-`gcontext add` on an already installed agent warns and stops instead of overwriting.
+Installing an already-installed agent warns and stops instead of overwriting.
 
 ## The example run
 
@@ -172,11 +171,11 @@ Fabricated content is allowed outside `runs/example/` too, but it must be labele
 
 ## The setup command contract
 
-`commands/setup.md` is optional: the manifest alone covers agents whose setup is only connections. When present, it is the bridge from template to personal instance and follows the contract in docs/setup-script.md: numbered agent-specific steps only, no greeting, no report, no completion text, no format instructions. It is an interview: the agent asks, the user answers in plain words, the agent builds and confirms. The contract:
+`commands/setup.md` is optional: the manifest alone covers agents whose setup is only connections. When present, it is the bridge from template to personal instance. It is an interview: the agent asks, the user answers in plain words, the agent builds and confirms. The contract:
 
 1. **Read first**: the command starts by instructing the AI to read the agent's `index.md` and `steps/index.md` so the interview is informed.
 2. **Bind every parameter slot**: ask for each manifest parameter that is bound at setup time (per-run parameters are only explained, not bound).
-3. **Map connections**: for each `connections` entry, find a matching service in the agent's environment or help the user create one. In gcontext that means `connections/`; standalone it means whatever access the user's agent has.
+3. **Map connections**: for each `connections` entry, find a matching service in the agent's environment or help the user create one.
 4. **Generate the personal state**: create the files this agent needs locally (config, scripts against the user's systems, an empty runs/ besides the example). What gets generated is listed in the setup command itself.
 5. **Smoke test**: verify the critical path (a read against the user's system, a dry run of the first step) before declaring setup done.
 6. **Never rewrite the procedure**: setup personalizes state; it does not edit `steps/`.
@@ -202,8 +201,8 @@ The same file must work on both paths (gcontext MCP prompt and standalone agent)
 
 ## Sharing an agent
 
-Authors turn a lived agent into a template with the share-agent instructions: docs/share-agent.md. It strips the personal specifics into parameter slots and connection requirements, generates the setup command, fabricates the example run, and verifies the result against this spec.
+Authors turn a lived agent into a template with the share-agent instructions: [share-agent.md](share-agent.md). It strips the personal specifics into parameter slots and connection requirements, generates the setup command, fabricates the example run, and verifies the result against this spec.
 
 ## Relation to modules
 
-An agent is a module in spirit (see docs/modules.md): connection-agnostic and growing with use, but installed into its own top-level `agents/` folder, not into `modules/`. The agent spec adds the fixed shape on top: manifest frontmatter, `steps/`, `runs/`, the setup contract, the example run. Everything modules.md says about growth and portability applies unchanged.
+An agent is a module in spirit (see [modules.md](modules.md)): connection-agnostic and growing with use, but installed into its own top-level `agents/` folder, not into `modules/`. The agent spec adds the fixed shape on top: manifest frontmatter, `steps/`, `runs/`, the setup contract, the example run. Everything modules.md says about growth and portability applies unchanged.

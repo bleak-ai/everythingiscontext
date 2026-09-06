@@ -1,6 +1,6 @@
 # Modules
 
-Modules are portable, shareable units of context that anyone can drop into an agent folder. A module is a folder of files that teaches an agent how to do something. It works with whatever connections the agent already has.
+Modules are portable units of context that anyone can drop into an agent folder. A module is a folder of files that teaches an agent how to do something. It works with whatever connections the agent already has.
 
 ## What a module is
 
@@ -10,7 +10,7 @@ A module does NOT contain code, API keys, or connection config. It contains know
 
 ## Why this works
 
-Modules are connection-agnostic. A support agent module doesn't know about Stripe or Postgres. It knows "intake a ticket, find the right playbook, execute with approval, log the result." The agent figures out which connections to use at runtime by reading `connections/`.
+Modules are connection-agnostic. A support agent module does not know about Stripe or Postgres. It knows "intake a ticket, find the right playbook, execute with approval, log the result." The agent figures out which connections to use at runtime by reading `connections/`.
 
 This means the same module works for:
 - A company using Stripe + Cloudflare
@@ -48,27 +48,27 @@ There is no enforced schema beyond `index.md`. Different modules have different 
 
 ## How a module grows
 
-Nothing is enforced in code. The conventions (one topic per module, index.md as the folder's map, stay flat until sub-topics emerge, split files only when they stop being readable in one pass) are pushed to every connected agent by the framework instructions (`gcontext/prompts/framework-instructions.md` in the package); that file is the single source for them.
+The conventions (one topic per module, index.md as the folder's map, stay flat until sub-topics emerge, split files only when they stop being readable in one pass) are pushed to every connected agent by the framework instructions; that file is the single source for them.
 
 ## How someone uses a module
 
-1. Download the module folder (or copy it)
-2. Drop it into `modules/` in your agent folder
-3. That's it. The agent discovers it with `list_dir("modules")` and can read all its files.
+1. Download the module folder (or copy it).
+2. Drop it into `modules/` in your agent folder.
+3. The agent discovers it with `list_dir("modules")` and can read all its files.
 
-No installation step, no config to edit, no dependencies to resolve. It's just files.
+No installation step, no config to edit, no dependencies to resolve. It is just files.
 
 ## How the agent interacts with a module
 
 The agent sees modules with `list_dir("modules")`. When a task matches a module's purpose, the agent:
 
-1. Reads `index.md` to understand what the module does
-2. Reads any additional files (steps, playbooks, references)
-3. Checks `connections/` for available services
-4. Executes using `run_script` with the folder's secrets
-5. Writes back to the module (new playbooks, logs) if the module's process calls for it
+1. Reads `index.md` to understand what the module does.
+2. Reads any additional files (steps, playbooks, references).
+3. Checks `connections/` for available services.
+4. Executes using `run_script` with the folder's secrets.
+5. Writes back to the module (new playbooks, logs) if the module's process calls for it.
 
-The module grows over time as the agent adds playbooks and logs. Each copy diverges from the original as it accumulates specific knowledge. When a module stops being relevant, move it to `archive/modules/`.
+The module grows over time as the agent adds playbooks and logs. Each copy diverges from the original as it accumulates specific knowledge.
 
 ## What makes a good module
 
@@ -84,5 +84,3 @@ The module grows over time as the agent adds playbooks and logs. Each copy diver
 **Onboarding agent**: a checklist for setting up new team members. Ships with the steps. Each company customizes it with their specific accounts, tools, and access requirements.
 
 **Incident response**: a process for handling production incidents. Ships with severity levels and communication templates. Playbooks accumulate as incidents are resolved.
-
-**SEO pipeline**: a content creation agent. Ships with the process (research, write, review, publish). Adapts to whatever CMS and analytics connections the company has.

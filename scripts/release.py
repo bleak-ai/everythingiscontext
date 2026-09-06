@@ -1,10 +1,9 @@
-"""Bump version, clean old artifacts, build web + package.
+"""Bump version, clean old artifacts, build package.
 
 Run from the gcontext/ directory:
     uv run python scripts/release.py <new-version>
 
-Produces wheel + sdist in dist/. Does NOT publish; the agent handles
-that through the pypi connection.
+Produces wheel + sdist in dist/. Does NOT publish; use uv publish.
 """
 
 import re
@@ -39,7 +38,7 @@ def clean_dist():
 
 
 def build():
-    print("building web + package...")
+    print("building package...")
     result = subprocess.run(["make", "build"], cwd=REPO, capture_output=True, text=True)
     if result.returncode != 0:
         print(result.stdout)

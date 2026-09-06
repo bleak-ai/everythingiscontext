@@ -1,0 +1,64 @@
+#!/bin/sh
+# Block any commit that violates the context standard.
+# Enabled per clone with: git config core.hooksPath context/system/scripts/githooks
+
+is_task_state_path() {
+  case "$1" in
+    context/packages/tasks/backlog/*|context/packages/tasks/in_progress/*|context/packages/tasks/done/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_allowed_file_addition() {
+  case "$1" in
+    context/project/*.md|context/project/*/*.md) : ;;
+    *) return 1 ;;
+  esac
+  parent=${1%/*}
+  git cat-file -e "HEAD:$parent" 2>/dev/null
+}
+
+is_markdown_path() {
+  case "$1" in
+    *.md) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+tab=$(printf '\t')
+structure_paths=$(
+  git diff --cached --name-status --diff-filter=ADR --find-renames -- context |
+  while IFS="$tab" read -r status first second; do
+    if [ "$status" = "A" ]; then
+      is_markdown_path "$first" || continue
+      is_task_state_path "$first" && continue
+      is_allowed_file_addition "$first" && continue
+      printf '%s\n' "$first"
+    elif [ "$status" = "D" ]; then
+      is_markdown_path "$first" || continue
+      is_task_state_path "$first" && continue
+      printf '%s\n' "$first"
+    elif [ "${status#R}" != "$status" ]; then
+      if ! is_markdown_path "$first" && ! is_markdown_path "$second"; then
+        continue
+      fi
+      if is_task_state_path "$first" && is_task_state_path "$second"; then
+        continue
+      fi
+      printf '%s -> %s\n' "$first" "$second"
+    fi
+  done
+)
+
+if [ -n "$structure_paths" ] &&
+  git diff --cached --quiet -- context/system/log.md; then
+  echo "structure change without a log.md entry: $structure_paths (tier 3 needs Bernat's approval, logged as one appended entry)" >&2
+  exit 1
+fi
+
+if ! uv run context/system/scripts/sync-index-files.py --check; then
+  echo "context check failed: fix the failures above, then commit." >&2
+  echo "(escape hatch: git commit --no-verify, then tell the owner why)" >&2
+  exit 1
+fi
+exit 0

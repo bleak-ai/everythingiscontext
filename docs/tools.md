@@ -8,7 +8,7 @@ Returns the content of one file. This is the on-demand counterpart to attaching 
 
 ## write_file
 
-Writes one file, creating parent directories as needed. Updating an existing file returns a unified diff of the change (capped at 200 lines), so every write the agent makes is auditable in the transcript; creating a file returns its size and line count. It refuses to write `secrets.env`. A write can carry a warning when it leaves a folder's index.md out of sync with its files; the write still happens, and the agent is expected to fix the index. Writes also trigger template command re-expansion (see [using.md](using.md#template-commands)).
+Writes one file, creating parent directories as needed. Updating an existing file returns a unified diff of the change (capped at 200 lines), so every write the agent makes is auditable in the transcript; creating a file returns its size and line count. It refuses to write `secrets.env`. A write can carry a warning when it leaves a folder's index.md out of sync with its files; the write still happens, and the agent is expected to fix the index.
 
 ## list_dir
 
@@ -28,4 +28,4 @@ The same execution environment as run_script, but for one-off code the agent wri
 
 ## agent
 
-Manages installed agents from the registry, with four actions: `search` finds agents by id, name, description, or tags; `install` copies one into `agents/`, resolving agents it depends on; `check` compares installed agents against the registry and reports what changed on each side; `update` pulls upstream changes while keeping local modifications (files changed on both sides get the upstream version written as `<file>.new` next to yours). This is the in-session counterpart of the `gcontext add`, `search`, and `update` CLI commands.
+Manages installed agents from the registry, with four actions: `search` finds agents by id, name, description, or tags; `install` copies one into `agents/`, resolving agents it depends on; `check` compares installed agents against the registry and reports what changed on each side; `update` pulls upstream changes while keeping local modifications (files changed on both sides get the upstream version written as `<file>.new` next to yours).

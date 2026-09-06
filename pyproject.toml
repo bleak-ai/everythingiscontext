@@ -1,6 +1,6 @@
 [project]
 name = "gcontext-ai"
-version = "0.16.0"
+version = "1.0.0"
 description = "A standard for a context/ folder in your repo, plus a small CLI."
 readme = "README.md"
 license = { text = "MIT" }
@@ -29,9 +29,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["gcontext"]
+artifacts = ["gcontext/standard/**"]
 
 [tool.hatch.build.targets.sdist]
-only-include = ["gcontext", "tests", "README.md", "LICENSE"]
+only-include = ["gcontext", "docs", "README.md", "CHANGELOG.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

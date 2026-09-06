@@ -27,9 +27,6 @@ RESET = "\033[0m"
 DEFAULT_PORT = 4242
 PORT_LOCKFILE = ".gcontext-port"
 
-# The reload rule from docs/setup-script.md: one wording, reused everywhere.
-RESTART_RULE = ("Run `gcontext reload`, then reconnect in your client (`/mcp` in Claude Code) "
-                "if it reports a reconnect is needed. If the server is stopped: `gcontext serve`.")
 
 def find_project_dir(path: str | None) -> Path:
     p = Path(path).resolve() if path else Path.cwd().resolve()
@@ -90,82 +87,11 @@ def find_free_port(start: int, attempts: int = 50) -> int:
     sys.exit(1)
 
 
-def fetch_status(port: int) -> dict | None:
-    """Query the running server. None means nothing is listening."""
-    try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/status", timeout=2) as resp:
-            return json.loads(resp.read())
-    except (urllib.error.URLError, OSError, ValueError):
-        return None
-
-
-def post_reload(port: int) -> dict | None:
-    """POST /api/reload on the running server. None means nothing is listening."""
-    try:
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{port}/api/reload", method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        try:
-            return json.loads(e.read())
-        except ValueError:
-            return {"error": f"server returned HTTP {e.code}"}
-    except (urllib.error.URLError, OSError, ValueError):
-        return None
-
-
-def format_reload_report(report: dict) -> list[str]:
-    """Render the /api/reload report in the house style. Pure, for tests."""
-    if report.get("error"):
-        return [
-            f"Error: {report['error']}",
-            "The server kept its previous state. Fix the file and run gcontext reload again.",
-        ]
-    lines = [
-        f"Reloaded: {report.get('framework_prompts', 0)} built-in + "
-        f"{report.get('project_commands', 0)} project command(s) re-registered."
-    ]
-    if report.get("removed"):
-        lines.append(f"Removed: {', '.join(report['removed'])}")
-    if report.get("added"):
-        lines.append(f"Added: {', '.join(report['added'])}")
-    if report.get("agent_md_changed"):
-        lines.append("agent.md: reloaded, delivered to clients at their next connect.")
-    server_version = report.get("version")
-    if server_version and server_version != __version__:
-        lines.append(
-            f"Warning: the server runs gcontext {server_version} but "
-            f"{__version__} is installed. A full restart is required to run "
-            "the installed version (stop, gcontext up)."
-        )
-    if report.get("client_reconnect_needed"):
-        lines.append("Reconnect your client to pick this up (/mcp in Claude Code).")
-    else:
-        lines.append("Live now.")
-    return lines
-
-
-def cmd_reload(args):
-    project_dir = find_project_dir(args.project)
-    port = resolve_port(args, project_dir)
-    live = fetch_status(port)
-    if live is None:
-        print(f"Server not running. Start it: gcontext up {args.project or '.'}", file=sys.stderr)
-        sys.exit(1)
-    if live.get("project_dir") != str(project_dir.resolve()):
-        print(f"Error: port {port} is serving a different project "
-              f"({live.get('name', '?')} at {live.get('project_dir', '?')}).", file=sys.stderr)
-        sys.exit(1)
-    report = post_reload(port)
-    if report is None:
-        print(f"Server not running. Start it: gcontext up {args.project or '.'}", file=sys.stderr)
-        sys.exit(1)
-    for line in format_reload_report(report):
-        print(line)
-    if report.get("error"):
-        sys.exit(1)
+def cmd_init(args):
+    from . import init as init_mod
+    target_dir = find_project_dir(args.project)
+    exit_code = init_mod.run_init(target_dir)
+    sys.exit(exit_code)
 
 
 def cmd_serve(args):
@@ -175,14 +101,12 @@ def cmd_serve(args):
     port = resolve_port(args, project_dir)
 
     if not port_is_free(port):
-        running = fetch_status(port)
-        who = f" ({running.get('name', '?')} serving {running.get('project_dir', '?')})" if running else ""
         if getattr(args, "port", None):
-            print(f"Error: port {port} (from --port) is already in use{who}.", file=sys.stderr)
+            print(f"Error: port {port} (from --port) is already in use.", file=sys.stderr)
             print("Free it, or pick another port with --port.", file=sys.stderr)
             sys.exit(1)
         chosen = find_free_port(port + 1)
-        print(f"{YELLOW}{BOLD}Port {port} is taken{who}.{RESET}")
+        print(f"{YELLOW}{BOLD}Port {port} is taken.{RESET}")
         print(f"{YELLOW}{BOLD}Using port {chosen} instead.{RESET}")
         print()
         port = chosen
@@ -194,7 +118,6 @@ def cmd_serve(args):
     n_commands = server.register_commands()
     n_base_lines, n_instruction_lines = server.load_instructions()
     server.snapshot_startup_files()
-    server.freeze_boot_prompts()
 
     print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} serving {name} {DIM}({__version__}){RESET}")
     print(f"{DIM}State: {project_dir}{RESET}")
@@ -230,48 +153,6 @@ def cmd_serve(args):
         )
     finally:
         remove_port_lockfile(project_dir)
-
-
-def cmd_status(args):
-    project_dir = find_project_dir(args.project)
-    port = resolve_port(args, project_dir)
-
-    name = project_dir.name
-    print(f"{BOLD}gcontext{RESET} {DIM}-{RESET} status of {name}")
-    print(f"{DIM}State: {project_dir}{RESET}")
-    print()
-
-    needs_restart = False
-    live = fetch_status(port)
-    if live is None:
-        print(f"Server: {YELLOW}not running{RESET} {DIM}(start it: gcontext up){RESET}")
-    elif live.get("project_dir") != str(project_dir.resolve()):
-        print(f"Server: {YELLOW}port {port} is serving a different project{RESET}")
-        print(f"  {DIM}{live.get('name', '?')} at {live.get('project_dir', '?')}{RESET}")
-    else:
-        print(f"Server: {GREEN}up{RESET} at {server_url(port)}")
-        sessions = live.get("sessions", [])
-        if not sessions:
-            print(f"  {DIM}no client connected yet{RESET}")
-        for s in sessions:
-            print(f"  {GREEN}{s['client']}{RESET} {DIM}{s['version']}{RESET}  connected {s['connected']}  last activity {s['last_seen']}")
-        stale = live.get("stale") or {}
-        if stale.get("commands"):
-            print(f"  {YELLOW}files changed since server start; run gcontext reload{RESET}")
-        needs_restart = bool(stale.get("commands"))
-    print()
-
-    has_context = (project_dir / "context").is_dir()
-    if has_context:
-        print(f"Context: {project_dir / 'context'}")
-    else:
-        print(f"Context: {YELLOW}no context/ folder found{RESET}")
-    print()
-
-    print(f"{DIM}Point any MCP client at the server URL.{RESET}")
-    if needs_restart:
-        print()
-        print(f"Next: {RESTART_RULE}")
 
 
 def find_context_project_dir(path: str | None) -> Path:
@@ -411,24 +292,16 @@ def cmd_install(args):
 def cmd_check(args):
     project_dir = find_project_dir(args.project)
     result = subprocess.run(
-        ["uv", "run", "context/_system/scripts/check.py", "--check"],
+        ["uv", "run", "context/system/scripts/sync-index-files.py", "--check"],
         cwd=project_dir,
     )
     sys.exit(result.returncode)
 
 
-def cmd_statusline(args):
-    project_dir = find_project_dir(args.project)
-    port = resolve_port(args, project_dir)
-    status = fetch_status(port)
-    use_color = getattr(args, "color", False)
-    print(server.format_statusline(status, color=use_color))
-
-
 def main():
     parser = argparse.ArgumentParser(
         prog="gcontext",
-        description="A standard for a context/ folder, plus a small CLI: install, serve, check.",
+        description="A standard for a context/ folder, plus a small CLI: init, install, serve, check.",
     )
     parser.add_argument("--version", action="version", version=f"gcontext {__version__}")
     subparsers = parser.add_subparsers(dest="command")
@@ -437,18 +310,16 @@ def main():
         p.add_argument("project", nargs="?", help="Path to project directory")
         p.add_argument("--port", type=int, help=f"Server port (default: {DEFAULT_PORT})")
 
+    init_parser = subparsers.add_parser(
+        "init", help="Write the context standard into a project directory"
+    )
+    init_parser.add_argument("project", nargs="?", help="Path to project directory (default: .)")
+
     serve_parser = subparsers.add_parser(
         "serve",
-        aliases=["up"],
         help="Start the MCP server for a project",
     )
     add_common(serve_parser)
-
-    status_parser = subparsers.add_parser("status", help="Show server and project status")
-    add_common(status_parser)
-
-    reload_parser = subparsers.add_parser("reload", help="Apply file changes to the running server")
-    add_common(reload_parser)
 
     install_parser = subparsers.add_parser("install", help="Install a local package into context/packages/")
     install_parser.add_argument("source", help="Path to a local package folder")
@@ -460,20 +331,13 @@ def main():
     )
     check_parser.add_argument("project", nargs="?", help="Project root that contains context/")
 
-    statusline_parser = subparsers.add_parser("statusline", help="One-line server state for status display")
-    add_common(statusline_parser)
-    statusline_parser.add_argument("--color", action="store_true", help="Enable ANSI color codes in output")
-
     args = parser.parse_args()
 
     commands = {
+        "init": cmd_init,
         "serve": cmd_serve,
-        "up": cmd_serve,
-        "status": cmd_status,
-        "reload": cmd_reload,
         "install": cmd_install,
         "check": cmd_check,
-        "statusline": cmd_statusline,
     }
     if args.command in commands:
         commands[args.command](args)

@@ -227,7 +227,7 @@ def _restart_note(root: Path, target: Path) -> str:
     if parts == ("agent.md",):
         return (
             " Note: agent.md is pushed at connect; this change reaches clients "
-            "only after a restart (stop the server, gcontext up, reconnect the client)."
+            "only after a restart (stop the server, gcontext serve, reconnect the client)."
         )
     if (
         len(parts) == 4
@@ -237,7 +237,7 @@ def _restart_note(root: Path, target: Path) -> str:
     ):
         return (
             " Note: commands are registered at server start; this command appears "
-            "(or updates) only after a restart (stop the server, gcontext up, "
+            "(or updates) only after a restart (stop the server, gcontext serve, "
             "reconnect the client)."
         )
     return ""

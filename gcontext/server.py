@@ -2,7 +2,7 @@
 
 Six tools (defined below, their agent-facing text in prompts/tools/*.md),
 state files as MCP resources (gcontext://<path>, listed live), commands
-registered as prompts, a /status route, and session tracking.
+registered as prompts, and session tracking.
 The actual work lives in the per-concern modules:
 
     fs.py        read_file / write_file / list_dir / grep (path confinement, guards)
@@ -15,7 +15,6 @@ The actual work lives in the per-concern modules:
 If it is not in this file, the agent cannot invoke it.
 """
 
-import hashlib
 import sys
 import time
 from datetime import datetime
@@ -24,8 +23,6 @@ from pathlib import Path
 from fastmcp import FastMCP
 from fastmcp.resources import Resource
 from fastmcp.server.middleware import Middleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
 from . import __version__
 from . import commands as commands_mod
@@ -47,7 +44,7 @@ def _tool_doc(name: str) -> str:
     return (_PROMPTS_DIR / "tools" / f"{name}.md").read_text().strip()
 
 
-# Live MCP sessions, keyed by session id: {"client": ..., "connected": ..., "last_seen": ...}
+# Live MCP sessions, keyed by session id
 SESSIONS: dict[str, dict] = {}
 
 # Two file classes load only at server start: agent.md (pushed in the MCP
@@ -59,117 +56,6 @@ _STALE = {"agent_md": False, "commands": False}
 _STALE_WARNED = {"agent_md": False, "commands": False}
 _STALE_CHECK_INTERVAL = 5.0
 _last_stale_check = 0.0
-
-# Prompt set frozen after initial registration, before any client connects.
-BOOT_PROMPTS: set[str] = set()
-
-# Snapshot of what the last client handshake received.
-LAST_SERVED: dict = {}
-
-
-def _agent_md_hash() -> str:
-    path = PROJECT_DIR / "agent.md"
-    if not path.exists():
-        return ""
-    return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
-
-
-def current_prompt_names() -> set[str]:
-    return set(commands_mod._REGISTERED.keys())
-
-
-def snapshot_last_served() -> None:
-    global LAST_SERVED
-    LAST_SERVED = {
-        "prompts": current_prompt_names(),
-        "agent_md_hash": _agent_md_hash(),
-        "at": datetime.now().isoformat(timespec="seconds"),
-    }
-
-
-def freeze_boot_prompts() -> None:
-    global BOOT_PROMPTS
-    BOOT_PROMPTS = current_prompt_names().copy()
-
-
-def client_behind() -> dict:
-    current = current_prompt_names()
-    md_hash = _agent_md_hash()
-
-    if not LAST_SERVED:
-        return {
-            "behind": True,
-            "reason": "server_restarted",
-            "new_commands": [],
-            "removed_commands": [],
-            "agent_md_changed": False,
-            "served_at": None,
-        }
-
-    if _STALE.get("commands") or _STALE.get("agent_md"):
-        return {
-            "behind": True,
-            "reason": "server_stale",
-            "new_commands": [],
-            "removed_commands": [],
-            "agent_md_changed": False,
-            "served_at": LAST_SERVED.get("at"),
-        }
-
-    served_prompts = LAST_SERVED.get("prompts", set())
-    new = sorted(current - served_prompts)
-    removed = sorted(served_prompts - current)
-    md_changed = md_hash != LAST_SERVED.get("agent_md_hash", "")
-
-    if not new and not removed and not md_changed:
-        return {
-            "behind": False,
-            "reason": None,
-            "new_commands": [],
-            "removed_commands": [],
-            "agent_md_changed": False,
-            "served_at": LAST_SERVED.get("at"),
-        }
-
-    reason = "agent_md_changed" if md_changed and not new and not removed else "commands_changed"
-    return {
-        "behind": True,
-        "reason": reason,
-        "new_commands": new,
-        "removed_commands": removed,
-        "agent_md_changed": md_changed,
-        "served_at": LAST_SERVED.get("at"),
-    }
-
-
-def format_statusline(status: dict | None, color: bool = False) -> str:
-    if status is None:
-        return "gcontext down"
-
-    cb = status.get("client_behind", {})
-    if not cb.get("behind"):
-        line = "gcontext ok"
-        if color:
-            line = f"\033[32m{line}\033[0m"
-        return line
-
-    reason = cb.get("reason", "")
-    name = status.get("name", "gcontext")
-
-    if reason == "server_stale":
-        line = "gcontext: STALE, run gcontext reload"
-    elif reason == "server_restarted":
-        line = f"gcontext: RECONNECT NEEDED FOR {name} --> server restarted"
-    else:
-        items = [f"/{n}" for n in cb.get("new_commands", [])]
-        items += [f"-{n}" for n in cb.get("removed_commands", [])]
-        if cb.get("agent_md_changed") and not items:
-            items = ["agent.md changed"]
-        line = f"gcontext: RECONNECT NEEDED FOR {name} --> " + " , ".join(items)
-
-    if color:
-        line = f"\033[33m{line}\033[0m"
-    return line
 
 
 def _mtime(path: Path) -> float | None:
@@ -208,13 +94,14 @@ def check_staleness(force: bool = False) -> dict:
         _STALE["commands"] = current != STARTUP_SNAPSHOT["commands"]
     if _STALE["agent_md"] and not _STALE_WARNED["agent_md"]:
         _STALE_WARNED["agent_md"] = True
-        print("  ! agent.md changed outside tools; run gcontext reload, "
+        print("  ! agent.md changed outside tools; restart the server, "
               "then /mcp to push the new version", file=sys.stderr)
     if _STALE["commands"] and not _STALE_WARNED["commands"]:
         _STALE_WARNED["commands"] = True
-        print("  ! commands changed outside tools; run gcontext reload",
+        print("  ! commands changed outside tools; restart the server",
               file=sys.stderr)
     return dict(_STALE)
+
 
 def _session_id(context) -> str:
     ctx = getattr(context, "fastmcp_context", None)
@@ -236,7 +123,6 @@ class ConnectionTracker(Middleware):
             "connected": now,
             "last_seen": now,
         }
-        snapshot_last_served()
         print(f"  + {client} {version} connected ({now})", file=sys.stderr)
         return await call_next(context)
 
@@ -315,17 +201,6 @@ class ConnectionTracker(Middleware):
 mcp.add_middleware(ConnectionTracker())
 
 
-@mcp.custom_route("/status", methods=["GET"])
-async def status_route(request: Request) -> JSONResponse:
-    return JSONResponse({
-        "name": PROJECT_DIR.name,
-        "project_dir": str(PROJECT_DIR.resolve()),
-        "sessions": list(SESSIONS.values()),
-        "stale": check_staleness(force=True),
-        "client_behind": client_behind(),
-    })
-
-
 def register_commands() -> int:
     """Register command files as MCP prompts. Call once, after PROJECT_DIR is set."""
     return commands_mod.register_commands(mcp, PROJECT_DIR)
@@ -360,9 +235,6 @@ def load_instructions() -> tuple[int, int]:
     return len(base.splitlines()), len(text.splitlines())
 
 
-_RELOADING = False
-
-
 def _path_needs_reload(path: str) -> bool:
     from fnmatch import fnmatch
     if path == "agent.md":
@@ -371,65 +243,6 @@ def _path_needs_reload(path: str) -> bool:
         if fnmatch(path, glob):
             return True
     return False
-
-
-def _self_reload(context: str = "") -> str | None:
-    global _RELOADING
-    if _RELOADING:
-        return None
-    _RELOADING = True
-    try:
-        report = reload()
-    finally:
-        _RELOADING = False
-    if "error" in report:
-        return f"Reload failed ({context}): {report['error']}. Server kept previous state."
-    behind = client_behind()
-    if behind.get("behind"):
-        return f"Server reloaded ({report['project_commands']} commands). Client reconnect needed: /mcp"
-    return f"Server reloaded ({report['project_commands']} commands)."
-
-
-def reload() -> dict:
-    """Re-run the startup pipeline in place and report what changed.
-
-    Applies agent.md and command file edits to the running server. It
-    re-registers every prompt, reloads instructions, and re-snapshots the
-    startup files so the staleness warnings re-arm.
-
-    client_reconnect_needed is true when agent.md changed (it is delivered
-    in the MCP handshake) or when the prompt name set changed (Claude Code
-    ignores prompts/list_changed), so the CLI can tell the user honestly
-    whether a client reconnect is still required.
-    """
-    stale_before = check_staleness(force=True)
-    diff = commands_mod.reregister_all(mcp, PROJECT_DIR)
-    n_base_lines, n_agent_lines = load_instructions()
-    snapshot_startup_files()
-    _notify_prompts_changed()
-    agent_md_changed = bool(stale_before.get("agent_md"))
-    prompts_changed = bool(diff["removed"] or diff["added"])
-    return {
-        "version": __version__,
-        "framework_prompts": diff["framework"],
-        "project_commands": diff["project"],
-        "removed": diff["removed"],
-        "added": diff["added"],
-        "agent_md_changed": agent_md_changed,
-        "agent_md_lines": n_agent_lines,
-        "framework_instruction_lines": n_base_lines,
-        "client_reconnect_needed": agent_md_changed or prompts_changed,
-    }
-
-
-@mcp.custom_route("/api/reload", methods=["POST"])
-async def reload_route(request: Request) -> JSONResponse:
-    """Apply state edits to the running server. Localhost only, same trust
-    model as /status: the server binds 127.0.0.1."""
-    report = reload()
-    if "error" in report:
-        return JSONResponse(report, status_code=500)
-    return JSONResponse(report)
 
 
 def _resolve_resource_uri(uri: str) -> str | None:
@@ -507,10 +320,6 @@ def write_file(path: str, content: str) -> str:
         commands_mod.refresh_generated(mcp, PROJECT_DIR, path)
     except Exception as e:
         print(f"  ! generated-command refresh failed: {e}", file=sys.stderr)
-    if _path_needs_reload(path):
-        note = _self_reload(context=f"write_file {path}")
-        if note:
-            result = f"{result}\n{note}"
     return result
 
 
@@ -570,8 +379,6 @@ def run_adhoc_script(
     return _exec_result(
         exec_mod.run_adhoc_script(PROJECT_DIR, code, params=params, timeout=timeout)
     )
-
-
 
 
 def _notify_prompts_changed():
