@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1 (2026-09-07)
+
+- The bundled /save command follows the 1.0 Save steps instead of v5 wording.
+- The bundled pre-commit hook message says how to log a structure change.
+
 ## 1.0.0 (2026-09-07)
 
 ### Added

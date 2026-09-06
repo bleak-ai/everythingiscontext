@@ -52,7 +52,7 @@ structure_paths=$(
 
 if [ -n "$structure_paths" ] &&
   git diff --cached --quiet -- context/system/log.md; then
-  echo "structure change without a log.md entry: $structure_paths (tier 3 needs Bernat's approval, logged as one appended entry)" >&2
+  echo "structure change without a log.md entry: $structure_paths (append one line to context/system/log.md and stage it)" >&2
   exit 1
 fi
 
